@@ -25,3 +25,5 @@ tri-pp
 .metals/**
 .bloop/**
 .vscode
+src/main/scala/tricera/.metals/
+src/main/scala/tricera/.scala-build/

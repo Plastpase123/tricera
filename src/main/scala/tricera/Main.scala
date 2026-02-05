@@ -473,7 +473,6 @@ class Main (args: Array[String]) {
 //        cs.foreach(origC => println("  " + origC.toPrologString))
 //        println("-"*80)
 //    }
-
     if (prettyPrint) {
       println
       println("After simplification:")
@@ -557,7 +556,7 @@ class Main (args: Array[String]) {
       .through(MergeTransformedFunctionsContracts(callSiteTransforms))
 
     val executionResult = result match {
-      case solution: Solution => 
+      case solution: Solution =>
         import tricera.postprocessor._
         import tricera.postprocessor.PointerTools._
 
@@ -586,7 +585,7 @@ class Main (args: Array[String]) {
               .through(AddValidPointerPredicates.apply)
               .through(FormulaSimplifier.apply)
               .through(ACSLLineariser.apply)
-              .through(ResultPrinters.printACSL) 
+              .through(ResultPrinters.printACSL)
             ).ignore
         }
         Safe

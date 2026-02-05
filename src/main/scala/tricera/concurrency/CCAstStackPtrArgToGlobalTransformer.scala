@@ -66,10 +66,10 @@ private object CCAstUtils {
 
 /**
   * Vistor to test if an expression is a pointer to stack allocated data.
-  * 
+  *
   * NOTE: This visitor requires a type annotated AST as produced by
   *   the CCAstTypeAnnotationVistor.
-  * 
+  *
   * NOTE: This is very simplistic in it's interpretation of
   *   what is considered a stack pointer. However, something
   *   more refined will require more elaborate data flow
@@ -95,7 +95,7 @@ class CCAstIsStackPointerVisitor extends AbstractVisitor[Boolean, Unit] {
   override def visitDefault(op: Unary_operator, arg: Unit) = { false }
 }
 
-/** 
+/**
   * Vistor to replace given pointers with global variables.
   */
 class CCAstPointerToGlobalVisitor extends CCAstCopyWithLocation[Map[String, CCAstDeclaration]] {
@@ -203,7 +203,7 @@ class CallSiteTransform(
     args.asScala.zipWithIndex
       .withFilter({ case (arg, index) => isStackPtr(arg)})
       .map({ case (arg, index) => f"_${index}"})
-      .reduce((a,b) => a+b)      
+      .reduce((a,b) => a+b)
   }
 
   def getAstAdditions(): AstAddition = {
@@ -227,16 +227,16 @@ class CallSiteTransform(
     f"wrapped${separator}${id}${suffix}"
   }
 
-  private def transformIdentifier(id: String): String = { 
-    f"global${separator}${id}${suffix}" 
+  private def transformIdentifier(id: String): String = {
+    f"global${separator}${id}${suffix}"
   }
 
-  private def resultIdentifier(id: String): String = { 
-    f"result${separator}${id}${suffix}" 
+  private def resultIdentifier(id: String): String = {
+    f"result${separator}${id}${suffix}"
   }
 
-  private def savedIdentifier(id: String): String = { 
-    f"saved${separator}${id}${suffix}" 
+  private def savedIdentifier(id: String): String = {
+    f"saved${separator}${id}${suffix}"
   }
 
   private def toGlobalVariableName(functionName: String)(name: String) = {
@@ -285,7 +285,7 @@ class CallSiteTransform(
   private def createTransformedBody(originalBody: Compound_stm) = {
     val transforms = new CallSiteTransforms
     val paramToGlobalVar = removedParams.asScala.map(p => (p.accept(getName,()), toGlobalDeclaration(p))).toMap
-    val transformedBody = 
+    val transformedBody =
       originalBody
         .accept(new CCAstPointerToGlobalVisitor, paramToGlobalVar)
         .accept(stackPtrTransformer, transforms)
@@ -328,7 +328,7 @@ class CallSiteTransform(
     def paramToGlobalAssignmentStm(param: CCAstDeclaration, global: CCAstDeclaration) = {
       new ExprS(new SexprTwo(new Eassign(
         global.toEvarWithType(),
-        new Assign, 
+        new Assign,
         new Epreop(new Indirection(), param.toEvarWithType()))))
     }
 
@@ -355,7 +355,7 @@ class CallSiteTransform(
       val types = new ListBuffer[Type_specifier]
       specifiers.asScala.foreach(s => s.accept(getType, types))
       types.contains(new Tvoid) match {
-        case true => 
+        case true =>
           None
         case false =>
           Some(CCAstDeclaration(
@@ -402,7 +402,7 @@ class CallSiteTransform(
       val paramGlobalPairs = removedParams.asScala.map(p => (p.accept(toCCAstDeclaration,()), toGlobalDeclaration(p)))
       val savedGlobalPairs = paramGlobalPairs.map({ case (p, g) => (g.withId(savedIdentifier(g.getId())), g)})
       val body = new ListStm
-  
+
       for ((saved, global) <- savedGlobalPairs) {
         // Store global variables on the stack to allow for recursive
         // calls of the wrapper
@@ -414,7 +414,7 @@ class CallSiteTransform(
       }
 
       body.add(transformedFunctionInvocationStm())
-  
+
       for ((param, global) <- paramGlobalPairs.reverse) {
         body.add(globalToParamAssignmentStm(param, global))
       }
@@ -422,7 +422,7 @@ class CallSiteTransform(
       for ((saved, global) <- savedGlobalPairs.reverse) {
         body.add(assignmentStm(global, saved))
       }
-  
+
       body.add(returnStm())
       body
     }
@@ -554,7 +554,7 @@ class CCAstStackPtrArgToGlobalTransformer(val entryFunctionId: String)
 
     if (callSiteTransforms.nonEmpty) {
       val additions = callSiteTransforms.map(t => t.getAstAdditions()).reduce((a,b) => {a += b})
-      
+
       val getMaxLineNumber = new CCAstMaxLineNumber
       val updateLineNumbers = new CCAstUpdtLineNum[Unit](
         declarations.asScala
@@ -578,12 +578,12 @@ class CCAstStackPtrArgToGlobalTransformer(val entryFunctionId: String)
       progr
     }
   }
-  
+
 
   override def visit(callSite: Efunkpar, transforms: CallSiteTransforms): Exp = {
     (callSite.listexp_.asScala.find(CCAstUtils.isStackPtr),
      functionDefinitions.get(callSite.accept(getName, ()))) match {
-      case (Some(_), Some(funcDef)) => 
+      case (Some(_), Some(funcDef)) =>
         val exp = super.visit(callSite, transforms)
         // TODO: This will not work if function is invoked through
         //   a pointer. Then we don't know the name of the function
@@ -602,7 +602,7 @@ class CCAstStackPtrArgToGlobalTransformer(val entryFunctionId: String)
         // library function or because it is a predicate defined in
         // $...$ comment syntax used as argument to assume/assert.
         // Either way we can't transform and rewrite the function.
-        super.visit(callSite, transforms) 
+        super.visit(callSite, transforms)
       case _ =>
         super.visit(callSite, transforms)
     }
