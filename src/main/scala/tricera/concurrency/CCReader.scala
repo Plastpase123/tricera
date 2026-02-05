@@ -78,11 +78,12 @@ object CCReader {
   : (CCReader, Boolean, CallSiteTransform.CallSiteTransforms) = { // second ret. arg is true if modelled heap
     def entry(parser : concurrent_c.parser) = parser.pProgram
     val prog = parseWithEntry(input, entry _)
-    val atCallTransformedProg = CCAstAtExpressionTransformer.transform(prog)
+    val classToStructTransProg = CCAstClassTransformer.transform(prog)
+    val atCallTransformedProg = CCAstAtExpressionTransformer.transform(classToStructTransProg)
     val typeAnnotProg = CCAstTypeAnnotator(atCallTransformedProg)
     val (transformedCallsProg, callSiteTransforms) =
       CCAstStackPtrArgToGlobalTransformer(typeAnnotProg, entryFunction)
-  
+
     var reader : CCReader = null
     while (reader == null)
       try {
@@ -1502,7 +1503,7 @@ class CCReader private (prog              : Program,
 
         val (actualLhsVar, initValue, initGuard) =
           varDec.maybeInitializer match {
-            case Some(init : InitExpr) if init.exp_.isInstanceOf[Enondet] => 
+            case Some(init : InitExpr) if init.exp_.isInstanceOf[Enondet] =>
               lhsVar.typ match {
                 case typ : CCHeapArrayPointer =>
                   val resultExpr =
@@ -2545,16 +2546,16 @@ class CCReader private (prog              : Program,
               sortGetterMap get s
             override def wrapperSort(wrapper: IFunction): Option[Sort] =
               wrapper match {
-                case w: MonoSortedIFunction => 
+                case w: MonoSortedIFunction =>
                   wrapperSortMap.get(w)
                 case _ => None
               }
             override def getterSort(getter: IFunction): Option[Sort] =
               getter match {
-                case g: MonoSortedIFunction => 
+                case g: MonoSortedIFunction =>
                   getterSortMap.get(g)
                 case _ => None
-              } 
+              }
 
             override def getCtor(s: Sort): Int = sortCtorIdMap(s)
             override def getTypOfPointer(t: CCType): CCType =
@@ -2581,7 +2582,7 @@ class CCReader private (prog              : Program,
               else throw new TranslationException("getOldHeapTerm called with no heap!")
             } // todo: heap term for exit predicate?
 
-            override val getStructMap: Map[IFunction, CCStruct] = 
+            override val getStructMap: Map[IFunction, CCStruct] =
               structDefs.values.map((struct: CCStruct) => (struct.ctor, struct)).toMap
 
             override val annotationBeginSourceInfo : SourceInfo =
@@ -2637,16 +2638,16 @@ class CCReader private (prog              : Program,
               sortGetterMap get s
             override def wrapperSort(wrapper: IFunction): Option[Sort] =
               wrapper match {
-                case w: MonoSortedIFunction => 
+                case w: MonoSortedIFunction =>
                   wrapperSortMap.get(w)
                 case _ => None
               }
             override def getterSort(getter: IFunction): Option[Sort] =
               getter match {
-                case g: MonoSortedIFunction => 
+                case g: MonoSortedIFunction =>
                   getterSortMap.get(g)
                 case _ => None
-              } 
+              }
             override def getCtor(s : Sort) : Int = sortCtorIdMap(s)
             override def getTypOfPointer(t : CCType) : CCType =
               t match {
@@ -2669,8 +2670,8 @@ class CCReader private (prog              : Program,
 
             override def getOldHeapTerm : ITerm =
               getHeapTerm // todo: heap term for exit predicate?
-            
-            override val getStructMap: Map[IFunction, CCStruct] = 
+
+            override val getStructMap: Map[IFunction, CCStruct] =
               structDefs.values.map((struct: CCStruct) => (struct.ctor, struct)).toMap
 
             override val annotationBeginSourceInfo : SourceInfo =
