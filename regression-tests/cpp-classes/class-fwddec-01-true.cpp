@@ -2,10 +2,14 @@
 
 class C {
   public:
+  int data;
   int fun();
 };
 
-int C::fun() { return 1; };
+int C::fun() {
+  this->data = 1;
+  return this->data;
+}
 int main() {
   C c_obj;
 
