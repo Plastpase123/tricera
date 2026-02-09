@@ -1,0 +1,10 @@
+#!/bin/sh
+
+TESTS=""
+
+for name in $TESTS; do
+  echo
+  echo $name
+  $TRI_CMD -cex -abstract:off "$@" $name 2>&1 |
+grep -v 'at '
+done
