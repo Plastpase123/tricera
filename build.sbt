@@ -116,16 +116,13 @@ settings(
     // exclude java-cup from transitive dependencies, ccParser includes newer version
     ExclusionRule("net.sf.squirrel-sql.thirdparty-non-maven", "java-cup")),
 
-    nativeImageInstalled := false,
-    nativeImageVersion := "21.1.0",
-    nativeImageJvm := "graalvm-java11",
+    nativeImageInstalled := true,
     // point to GraalVM (recommended via env var)
     //nativeImageGraalHome := file(sys.env("GRAALVM_HOME")).toPath,
 
     nativeImageOptions ++= Seq(
       "--no-fallback",
-      "-H:+ReportExceptionStackTraces",
-      "--allow-incomplete-classpath"
+      "-H:+ReportExceptionStackTraces"
     ),
 
     nativeImageAgentMerge := true

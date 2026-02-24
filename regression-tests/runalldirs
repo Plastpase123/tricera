@@ -5,20 +5,13 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 JOBS=1
 
-if [ "$1" = "-native" ]; then
-    shift
-    export TRI_CMD="$ROOT_DIR/tri-native"
-else
-    export TRI_CMD="$ROOT_DIR/tri"
-fi
+export TRI_CMD="$ROOT_DIR/tri"
 
 if [ "$1" = "-j" ]; then
     shift
     JOBS="$1"
     shift
 fi
-
-echo "Using TRI_CMD=$TRI_CMD"
 
 ERRORS=0
 
