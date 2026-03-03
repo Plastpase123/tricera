@@ -1869,6 +1869,7 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
       }
       case tagged: Tag => tagged.cident_
       case tagged: TagType => tagged.cident_
+      //case tagged: ClassQualTag => tagged.cident_1 ++ "::" ++ tagged.cident_2
     }
 
   private def collectStructInfo(spec: Tstruct) : Unit = {
