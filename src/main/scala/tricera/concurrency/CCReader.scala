@@ -78,7 +78,8 @@ object CCReader {
   : (CCReader, Boolean, CallSiteTransform.CallSiteTransforms) = { // second ret. arg is true if modelled heap
     def entry(parser : concurrent_c.parser) = parser.pProgram
     val prog = parseWithEntry(input, entry _)
-    val atCallTransformedProg = CCAstAtExpressionTransformer.transform(prog)
+    val exceptionTransformedProg = CCAstExceptionTransformer.transform(prog)
+    val atCallTransformedProg = CCAstAtExpressionTransformer.transform(exceptionTransformedProg)
     val typeAnnotProg = CCAstTypeAnnotator(atCallTransformedProg)
     val (transformedCallsProg, callSiteTransforms) =
       CCAstStackPtrArgToGlobalTransformer(typeAnnotProg, entryFunction)
