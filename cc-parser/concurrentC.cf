@@ -294,9 +294,9 @@ SjumpFour.  Jump_stm ::= "return" ";" ;
 SjumpFive.  Jump_stm ::= "return" Exp ";" ;
 
 -- try-catch statements
-STry. Try_stm ::= "try" Compound_stm [Catch_stm] ;
+Stry. Try_stm ::= "try" Compound_stm [Catch_stm] ;
 
-SCatch. Catch_stm ::= "catch" "(" Parameter_declaration ")" Compound_stm ;
+Scatch. Catch_stm ::= "catch" "(" Parameter_declaration ")" Compound_stm ;
 
 separator nonempty Catch_stm "" ;
 
