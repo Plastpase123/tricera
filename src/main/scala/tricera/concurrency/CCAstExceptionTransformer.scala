@@ -44,6 +44,29 @@ object CCAstExceptionTransformer {
   private val printer = new PrettyPrinterNonStatic()
 
   private val exceptionFlagVarName = "__exception_flag";
+  private val catchAllLabel = "_catch_all_"
+  private val startOfCatchLabel = "_catch_"
+  private val afterCatchLabel = "_after_catch_"
+
+  private val setExceptionFlag = new ExprS(
+    new SexprTwo(
+      new Eassign(
+        new Evar(exceptionFlagVarName),
+          new Assign,
+            new Econst(new Eint("1"))
+      )
+    )
+  )
+
+  private val unsetExceptionFlag = new ExprS(
+    new SexprTwo(
+      new Eassign(
+        new Evar(exceptionFlagVarName),
+          new Assign,
+            new Econst(new Eint("0"))
+      )
+    )
+  )
 
   def transform(program: Program): Program = {
     val transformer = new ExceptionTransformer()
@@ -62,7 +85,7 @@ object CCAstExceptionTransformer {
       val declspec = new ListDeclaration_specifier
       declspec.add(new Type(new Tint()))
       val initDecls = new ListInit_declarator
-      initDecls.add(new OnlyDecl(new NoPointer(new Name("__exception_flag"))))
+      initDecls.add(new OnlyDecl(new NoPointer(new Name(exceptionFlagVarName))))
       val extraSpecifiers = new ListExtra_specifier
 
       extDeclarations.add(new Global(new Declarators(declspec, initDecls, extraSpecifiers)))
@@ -77,26 +100,16 @@ object CCAstExceptionTransformer {
 
     override def visit(expStm: ExprS, arg: Any): Stm = {
       val new_stm = expStm.expression_stm_ match {
-        case non_empty_exp_stm: SexprTwo => non_empty_exp_stm.exp_ match {
-          case throw_exp: Ethrow => {
+        case nonEmptyExpStm: SexprTwo => nonEmptyExpStm.exp_ match {
+          case throwExp: Ethrow => {
             val stmList = new ListStm
-            stmList.add(
-              new ExprS(new SexprTwo(
-                new Eassign(
-                  new Evar(exceptionFlagVarName),
-                  new Assign,
-                  new Econst(new Eint("1"))
-                  )
-                )
-              )
-            )
+            stmList.add(setExceptionFlag)
             stmList.add(new JumpS(new SjumpFour))
             new CompS(new ScompTwo(stmList))
           }
           case _ => expStm
         }
       }
-
       copyLocationInformation(expStm, new_stm)
     }
 
@@ -112,47 +125,105 @@ object CCAstExceptionTransformer {
               }
             }
 
+            val catchTypes = new ListParameter_declaration
+
+            // Collect the types from catch handlers
+            for ((catchBlock, i) <- catchBlocks.asScala.view.zipWithIndex) {
+              catchBlock match {
+                case catchStm: Scatch => {
+                  val paramDecl = catchStm.parameter_declaration_
+
+                  paramDecl match {
+                    case catchAll: More => {
+                      // Check if a catch-all handler is used at a wrong position
+                      if (i != catchBlocks.size - 1)
+                        throw new ExceptionTransformException("Catch-all can only be the last handler")
+                    }
+                    case _ => {}
+                  }
+                  catchTypes.add(paramDecl)
+                }
+              }
+            }
+
             // Transform try block
             val tryStmList = new ListStm
             tryBlock match {
               case empty: ScompOne => {}
               case stmts: ScompTwo => {
                 for (stm <- stmts.liststm_.asScala) {
-                  tryStmList.add(stm.accept(this, ())) // TODO: Handle throw statements
+                  stm match {
+                    case exprS: ExprS => exprS.expression_stm_ match {
+                      case sExprTwo: SexprTwo => sExprTwo.exp_ match {
+                        case eThrow: Ethrow => {
+                          // Handle throw statements
+                          val thrownExp = eThrow.exp_
+                          
+                          thrownExp match {
+                            case eVar: EvarWithType => {
+                              val varType = eVar.listdeclaration_specifier_
+
+                              var typeMatch = false
+                              val iter = catchTypes.asScala.iterator
+
+                              // Check the handlers in order for a matching type
+                              while (iter.hasNext && !typeMatch) {
+                                val catchType = iter.next
+                                catchType match {
+                                  case catchAll: More => {
+                                    tryStmList.add(setExceptionFlag)
+                                    tryStmList.add(new JumpS(new SjumpOne(catchAllLabel)))
+                                    typeMatch = true
+                                  }
+                                  case typeAndParam: TypeAndParam => {
+                                    // Compare type of expression to catch handler's type
+                                    if (typeAndParam.listdeclaration_specifier_ == varType) {
+                                      tryStmList.add(setExceptionFlag)
+                                      tryStmList.add(new JumpS(new SjumpOne(catchBlockLabelName(catchType))))
+                                      typeMatch = true
+                                    }
+                                  }
+                                  case _ => throw new ExceptionTransformException("Invalid type declaration in catch")
+                                }
+                              }
+                            }
+                            // TODO: Handle more complex expressions
+                            case _ => throw new ExceptionTransformException("Not supported expression to throw")
+                          }
+                        }
+                        case _ => { tryStmList.add(stm.accept(this, ())) }
+                      }
+                      case _ => { tryStmList.add(stm.accept(this, ())) }
+                    }
+                    case _ => { tryStmList.add(stm.accept(this, ())) }
+                  }
                 }
               }
             }
             val newTryBlock = new ScompTwo(tryStmList)
             stms.add(new CompS(newTryBlock))
 
-            // Transform catch handlers
-            for ((catchBlock, i) <- catchBlocks.asScala.view.zipWithIndex) {
+            // Transform catch handlersunsetExceptionFlag
+            for (catchBlock <- catchBlocks.asScala) {
               val catchStmList = new ListStm
               catchBlock match {
                 case catchStm: Scatch => {
                   val paramDecl = catchStm.parameter_declaration_
                   
-                  // Check if a catch-all handler is used at a wrong position
-                  paramDecl match {
-                    case catchAll: More => {
-                      if (i != catchBlocks.size - 1)
-                        throw new ExceptionTransformException("Catch-all can only be the last handler")
-                    }
-                    case _ => {}
-                  }
-
                   val compoundStm = catchStm.compound_stm_
                   val blockName = catchBlockLabelName(paramDecl)
-                  // val blockName = "foo"
                   compoundStm match {
                     case empty: ScompOne => {}
                     case stmts: ScompTwo => {
+                    
+                      // Reset exception flag
+                      catchStmList.add(unsetExceptionFlag)
                       for (stm <- stmts.liststm_.asScala) {
                         catchStmList.add(stm.accept(this, ()))
                       }
                     }
                   }
-                  catchStmList.add(new JumpS(new SjumpOne("_after_catch")))
+                  catchStmList.add(new JumpS(new SjumpOne(afterCatchLabel)))
                   val newCatchBlock = new LabelS(new SlabelOne(blockName, new CompS(new ScompTwo(catchStmList))))
                   stms.add(newCatchBlock)
                 }
@@ -161,7 +232,7 @@ object CCAstExceptionTransformer {
             }
 
             // Add a label for after the handlers
-            stms.add(new LabelS(new SlabelOne("_after_catch", new ExprS(new SexprOne))))
+            stms.add(new LabelS(new SlabelOne(afterCatchLabel, new ExprS(new SexprOne))))
 
           }
           case _ => {
@@ -175,9 +246,9 @@ object CCAstExceptionTransformer {
 
     private def catchBlockLabelName(paramDecl: Parameter_declaration): String = {
       paramDecl match {
-        case catchAll: More => "_catch_all_"
+        case catchAll: More => catchAllLabel
         case typeAndParam: TypeAndParam => {
-          val str = new StringBuilder("_catch_")
+          val str = new StringBuilder(startOfCatchLabel)
           for (decSpec <- typeAndParam.listdeclaration_specifier_.asScala) {
             str.append(decSpec match {
               case _typ: Type => _typ.type_specifier_ match {
@@ -189,7 +260,10 @@ object CCAstExceptionTransformer {
                 case t: Tlong => "long_"
                 case t: Tsigned => "signed_"
                 case t: Tunsigned => "unsigned_"
-                case t: Tstruct => throw new ExceptionTransformException("Not implemented")
+                case t: Tstruct => t.struct_or_union_spec_ match {
+                  case tagType: TagType => "struct_" + tagType.cident_ + "_"
+                  case _ => throw new ExceptionTransformException("Invalid parameter declaration in catch")
+                }
                 case t: Tenum => throw new ExceptionTransformException("Not implemented")
                 case _ => throw new ExceptionTransformException("Not supported type")
               }
@@ -199,7 +273,7 @@ object CCAstExceptionTransformer {
 
           str.toString()
         }
-        case _ => throw new ExceptionTransformException("Illegal parameter declaration in catch")
+        case _ => throw new ExceptionTransformException("Invalid parameter declaration in catch")
       }
     }
   }
