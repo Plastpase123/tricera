@@ -83,7 +83,7 @@ object CCReader {
     val typeAnnotProg = CCAstTypeAnnotator(atCallTransformedProg)
     val (transformedCallsProg, callSiteTransforms) =
       CCAstStackPtrArgToGlobalTransformer(typeAnnotProg, entryFunction)
-  
+
     var reader : CCReader = null
     while (reader == null)
       try {
