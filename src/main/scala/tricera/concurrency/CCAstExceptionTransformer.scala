@@ -87,6 +87,40 @@ object CCAstExceptionTransformer {
     str.toString()
   }
 
+  private def createExceptionTypeEnumName(types: ListBuffer[Type_specifier]): String = {
+    val str = new StringBuilder
+    for (type_ <- types) {
+      str.append(type_ match {
+        case t: Tbool => "BOOL_"
+        case t: Tchar => "CHAR_"
+        case t: Tshort => "SHORT_"
+        case t: Tint => "INT_"
+        case t: Tlong => "LONG_"
+        case t: Tsigned => "SIGNED_"
+        case t: Tunsigned => "UNSIGNED_"
+        case t: Tstruct => t.struct_or_union_spec_ match {
+          case tagType: TagType => "STRUCT_" + tagType.cident_ + "_"
+          case _ => throw new ExceptionTransformException("Invalid parameter declaration in catch")
+        }
+        case t: Tenum => t.enum_specifier_ match {
+          case enumVar: EnumVar => "ENUM_" + enumVar.cident_ + "_"
+          case _ => throw new ExceptionTransformException("Invalid parameter declaration in catch")
+        }
+        case _ => throw new ExceptionTransformException("Not supported type")
+      })
+    }
+
+    str.toString()
+  }
+
+  private def createExceptionStructField(typeSpec: ListBuffer[Type_specifier]): String = {
+    val declSpecList = new ListDeclaration_specifier
+    for (t <- typeSpec) {
+      declSpecList.add(new Type(t))
+    }
+    typeLabelName(declSpecList) + "v"
+  }
+
   private def catchBlockLabelName(paramDecl: Parameter_declaration): String = {
     paramDecl match {
       case catchAll: More => catchAllLabel
@@ -114,13 +148,12 @@ object CCAstExceptionTransformer {
   }
 
   private def collectExceptionTypes(program: Program): ExceptionTypesCollectionResult = {
-    // TODO: Also collect types from catch handlers
-
     val buffer = new MHashMap[String, FuncExceptionTypeData]
     val collector = new FuncExceptionTypesCollector(buffer)
     program.accept(collector, null)
 
     val exceptionTypes = Set[ListBuffer[Type_specifier]]()
+    program.accept(new CatchExceptionTypesCollector(exceptionTypes), exceptionTypes)
 
     for ((_, typeSet) <- buffer) {
       for (typeSpecList <- typeSet) {
@@ -157,18 +190,54 @@ object CCAstExceptionTransformer {
   }
 
   private def listDeclSpecToListOfTypeSpec(listDeclSpec: ListDeclaration_specifier): ListBuffer[Type_specifier] = {
-  val types = new ListBuffer[Type_specifier]
-  listDeclSpec.asScala.foreach(decl => {
-    decl match {
-      case t: Type => {
-        types.addOne(t.type_specifier_)
+    val types = new ListBuffer[Type_specifier]
+    listDeclSpec.asScala.foreach(decl => {
+      decl match {
+        case t: Type => {
+          types.addOne(t.type_specifier_)
+        }
+        case _ => throw new ExceptionTransformException("Invalid type declaration")
       }
-      case _ => throw new ExceptionTransformException("Invalid type declaration")
-    }
-  })
+    })
+    types
+  }
 
-  types
-}
+  private class CatchExceptionTypesCollector(
+    val exceptionTypesBuffer: Set[ListBuffer[Type_specifier]]
+  ) extends ComposVisitor[Set[ListBuffer[Type_specifier]]] {
+    override def visit(catchStm: Scatch, arg: Set[ListBuffer[Type_specifier]]): Catch_stm = {
+      val paramDecl = catchStm.parameter_declaration_
+      val block = catchStm.compound_stm_
+      val typeSpecList = new ListBuffer[Type_specifier]
+      paramDecl match {
+        case onlyType: OnlyType => {
+          for (declSpec <- onlyType.listdeclaration_specifier_.asScala) {
+            declSpec match {
+              case t: Type => {
+                typeSpecList.addOne(t.type_specifier_)
+              }
+            }
+          }
+
+        }
+        case typeAndParam: TypeAndParam => {
+          for (declSpec <- typeAndParam.listdeclaration_specifier_.asScala) {
+            declSpec match {
+              case t: Type => {
+                typeSpecList.addOne(t.type_specifier_)
+              }
+            }
+          }
+        }
+        case _ => {}
+      }
+
+      arg.add(typeSpecList)
+      block.accept(this, arg)
+
+      catchStm
+    }
+  }
 
   private class FuncExceptionTypesCollector(
     val funcExceptionTypesBuffer: MHashMap[String, FuncExceptionTypeData]
@@ -227,8 +296,10 @@ object CCAstExceptionTransformer {
   private class ExceptionTransformer(
     val exceptionTypeData: ExceptionTypesCollectionResult
   ) extends CCAstCopyWithLocation[Any] {
-
     private val getName = new CCAstGetNameVistor
+
+    private val funcExceptionTypeData = exceptionTypeData.funcExceptionTypes
+    private val exceptionTypes = exceptionTypeData.exceptionTypes
 
     private val setExceptionFlag = new ExprS(
       new SexprTwo(
@@ -296,13 +367,40 @@ object CCAstExceptionTransformer {
       val originalProgDecls = p.listexternal_declaration_
       val extDeclarations = new ListExternal_declaration
 
-      // TODO: Create these based on collected exception types
-      extDeclarations.add(globalEnumDecl(exceptionTypeEnumName, List("INT", "LONG")))
-      extDeclarations.add(globalStructDecl(exceptionValueStructName, List((List(new Tint), "int_v"), (List(new Tlong), "long_v"))))
+      // Enum declaration for exception types
+      extDeclarations.add(
+        globalEnumDecl(
+          exceptionTypeEnumName, 
+          exceptionTypes.map(t => createExceptionTypeEnumName(t)).toList
+        )
+      )
 
-      extDeclarations.add(globalVarDecl(List(new Tint()), exceptionFlagVarName))
-      extDeclarations.add(globalVarDecl(List(new Tenum(new EnumVar(exceptionTypeEnumName))), exceptionTypeVarName))
-      extDeclarations.add(globalVarDecl(List(new Tstruct(new TagType(new Struct, exceptionValueStructName))), exceptionValueVarName))
+      // Struct declaration for exception values
+      extDeclarations.add(
+        globalStructDecl(
+          exceptionValueStructName, 
+          exceptionTypes.map(t => (t.toList, createExceptionStructField(t))).toList
+        )
+      )
+
+      // Global variables for exception information
+      extDeclarations.add(
+        globalVarDecl(
+          List(new Tint()), exceptionFlagVarName
+        )
+      )
+      extDeclarations.add(
+        globalVarDecl(
+          List(new Tenum(new EnumVar(exceptionTypeEnumName))),
+          exceptionTypeVarName
+        )
+      )
+      extDeclarations.add(
+        globalVarDecl(
+          List(new Tstruct(new TagType(new Struct, exceptionValueStructName))),
+          exceptionValueVarName
+        )
+      )
 
       for (dec <- originalProgDecls.asScala) {
         extDeclarations.add(dec.accept(this, arg))
