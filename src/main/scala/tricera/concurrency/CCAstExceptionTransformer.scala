@@ -57,75 +57,74 @@ object CCAstExceptionTransformer {
 
   private val getName = new CCAstGetNameVistor
 
+  private def typeSpecToString(typeSpec: Type_specifier): String = {
+    typeSpec match {
+      case t: Tvoid => "void"
+      case t: Tbool => "_Bool"
+      case t: Tchar => "char"
+      case t: Tshort => "short"
+      case t: Tint => "int"
+      case t: Tlong => "long"
+      case t: Tsigned => "signed"
+      case t: Tunsigned => "unsigned"
+      case t: Tstruct => t.struct_or_union_spec_ match {
+        case tagType: TagType => "struct" + tagType.cident_
+        case _ => throw new ExceptionTransformException("Invalid parameter declaration in catch")
+      }
+      case t: Tenum => t.enum_specifier_ match {
+        case enumVar: EnumVar => "enum" + enumVar.cident_
+        case _ => throw new ExceptionTransformException("Invalid parameter declaration in catch")
+      }
+      case _ => throw new ExceptionTransformException("Not supported type")
+    }
+  }
+
   private def typeLabelName(listDecSpec: ListDeclaration_specifier): String = {
     val str = new StringBuilder
+    var joiner = ""
     for (decSpec <- listDecSpec.asScala) {
+      str.append(joiner)
+      joiner = "_"
       str.append(decSpec match {
-        case _typ: Type => _typ.type_specifier_ match {
-          case t: Tvoid => "void_"
-          case t: Tbool => "_Bool_"
-          case t: Tchar => "char_"
-          case t: Tshort => "short_"
-          case t: Tint => "int_"
-          case t: Tlong => "long_"
-          case t: Tsigned => "signed_"
-          case t: Tunsigned => "unsigned_"
-          case t: Tstruct => t.struct_or_union_spec_ match {
-            case tagType: TagType => "struct_" + tagType.cident_ + "_"
-            case _ => throw new ExceptionTransformException("Invalid parameter declaration in catch")
-          }
-          case t: Tenum => t.enum_specifier_ match {
-            case enumVar: EnumVar => "enum_" + enumVar.cident_ + "_"
-            case _ => throw new ExceptionTransformException("Invalid parameter declaration in catch")
-          }
-          case _ => throw new ExceptionTransformException("Not supported type")
-        }
+        case _type: Type => typeSpecToString(_type.type_specifier_)
         case _ => ""
       })
     }
+    str.toString()
+  }
 
+  private def typeLabelName(types: ListBuffer[Type_specifier]): String = {
+    val str = new StringBuilder
+    var joiner = ""
+    for (type_ <- types) {
+      str.append(joiner)
+      joiner = "_"
+      str.append(typeSpecToString(type_))
+    }
     str.toString()
   }
 
   private def createExceptionTypeEnumName(types: ListBuffer[Type_specifier]): String = {
-    val str = new StringBuilder
-    for (type_ <- types) {
-      str.append(type_ match {
-        case t: Tbool => "BOOL_"
-        case t: Tchar => "CHAR_"
-        case t: Tshort => "SHORT_"
-        case t: Tint => "INT_"
-        case t: Tlong => "LONG_"
-        case t: Tsigned => "SIGNED_"
-        case t: Tunsigned => "UNSIGNED_"
-        case t: Tstruct => t.struct_or_union_spec_ match {
-          case tagType: TagType => "STRUCT_" + tagType.cident_ + "_"
-          case _ => throw new ExceptionTransformException("Invalid parameter declaration in catch")
-        }
-        case t: Tenum => t.enum_specifier_ match {
-          case enumVar: EnumVar => "ENUM_" + enumVar.cident_ + "_"
-          case _ => throw new ExceptionTransformException("Invalid parameter declaration in catch")
-        }
-        case _ => throw new ExceptionTransformException("Not supported type")
-      })
-    }
-
-    str.toString()
+    typeLabelName(types).toUpperCase()
   }
 
   private def createExceptionStructField(typeSpec: ListBuffer[Type_specifier]): String = {
-    val declSpecList = new ListDeclaration_specifier
+    val listDecSpec = new ListDeclaration_specifier
     for (t <- typeSpec) {
-      declSpecList.add(new Type(t))
+      listDecSpec.add(new Type(t))
     }
-    typeLabelName(declSpecList) + "v"
+    typeLabelName(listDecSpec) + "_v"
+  }
+
+  private def createExceptionStructField(listDecSpec: ListDeclaration_specifier): String = {
+    typeLabelName(listDecSpec) + "_v"
   }
 
   private def catchBlockLabelName(paramDecl: Parameter_declaration): String = {
     paramDecl match {
       case catchAll: More => catchAllLabel
       case typeAndParam: TypeAndParam =>
-        startOfCatchLabel + typeLabelName(typeAndParam.listdeclaration_specifier_) + typeAndParam.declarator_.accept(getName, ())
+        startOfCatchLabel + typeLabelName(typeAndParam.listdeclaration_specifier_) + "_" + typeAndParam.declarator_.accept(getName, ())
       case onlyType: OnlyType => startOfCatchLabel + typeLabelName(onlyType.listdeclaration_specifier_)
       case _ => throw new ExceptionTransformException("Invalid parameter declaration in catch")
     }
@@ -140,7 +139,7 @@ object CCAstExceptionTransformer {
     val collectionResult = collectExceptionTypes(program)
     val exceptionVarTransformedProgram = program.accept(new ExceptionVariableTransformer, None)
     val transformer = new ExceptionTransformer(collectionResult)
-    val transformed_program = exceptionVarTransformedProgram.accept(transformer, null);
+    val transformed_program = exceptionVarTransformedProgram.accept(transformer, None);
 
     println("=== EXCEPTION TRANSFORMED PROGRAM === ")
     println(printer print transformed_program)
@@ -218,7 +217,6 @@ object CCAstExceptionTransformer {
               }
             }
           }
-
         }
         case typeAndParam: TypeAndParam => {
           for (declSpec <- typeAndParam.listdeclaration_specifier_.asScala) {
@@ -282,7 +280,7 @@ object CCAstExceptionTransformer {
           if (exceptionVarName == eVar.cident_) {
             // Replace with the global exception value
             val exceptionType = exceptionTypeAndParam.listdeclaration_specifier_
-            val fieldName = typeLabelName(exceptionType) + "v"
+            val fieldName = createExceptionStructField(exceptionType)
             copyLocationInformation(eVar, new Eselect(new Evar(exceptionValueVarName), fieldName))
           } else {
             eVar
@@ -295,7 +293,7 @@ object CCAstExceptionTransformer {
 
   private class ExceptionTransformer(
     val exceptionTypeData: ExceptionTypesCollectionResult
-  ) extends CCAstCopyWithLocation[Any] {
+  ) extends CCAstCopyWithLocation[Option[ListParameter_declaration]] {
     private val getName = new CCAstGetNameVistor
 
     private val funcExceptionTypeData = exceptionTypeData.funcExceptionTypes
@@ -363,7 +361,7 @@ object CCAstExceptionTransformer {
       new Global(new NoDeclarator(declSpecList, new ListExtra_specifier))
     }
 
-    override def visit(p: Progr, arg: Any): Program = {
+    override def visit(p: Progr, arg: Option[ListParameter_declaration]): Program = {
       val originalProgDecls = p.listexternal_declaration_
       val extDeclarations = new ListExternal_declaration
 
@@ -410,22 +408,97 @@ object CCAstExceptionTransformer {
       copyLocationInformation(p, new Progr(extDeclarations))
     }
 
-    override def visit(expStm: ExprS, arg: Any): Stm = {
-      val new_stm = expStm.expression_stm_ match {
+    private def setExceptionType(typeSpecList: ListBuffer[Type_specifier]): ExprS = {
+      new ExprS(
+        new SexprTwo(
+          new Eassign(
+            new Evar(exceptionTypeVarName),
+            new Assign,
+            new Evar(createExceptionTypeEnumName(typeSpecList))
+          )
+        )
+      )
+    }
+
+    private def setExceptionValue(typeSpecList: ListBuffer[Type_specifier], exp: Exp): ExprS = {
+      new ExprS(
+        new SexprTwo(
+          new Eassign(
+            new Eselect(
+              new Evar(exceptionValueVarName),
+              createExceptionStructField(typeSpecList)
+            ),
+            new Assign, exp
+          )
+        )
+      )
+    }
+
+    override def visit(expStm: ExprS, optCatchTypes: Option[ListParameter_declaration]): Stm = {
+      val newStm = expStm.expression_stm_ match {
         case nonEmptyExpStm: SexprTwo => nonEmptyExpStm.exp_ match {
-          case throwExp: Ethrow => {
-            val stmList = new ListStm
-            stmList.add(setExceptionFlag)
-            stmList.add(new JumpS(new SjumpFour))
-            new CompS(new ScompTwo(stmList))
+          case throwExp: Ethrow => optCatchTypes match {
+            case Some(catchTypes) => {
+              //Handle throw statements
+              val thrownType = typeOfThrownExp(throwExp.exp_)
+              val stmList = new ListStm
+
+              var typeMatch = false
+              val iter = catchTypes.asScala.iterator
+
+              // Set global exception variables
+              stmList.add(setExceptionFlag)
+              stmList.add(setExceptionType(thrownType))
+              stmList.add(setExceptionValue(thrownType, throwExp.exp_))
+
+              // Check the handlers in order for a matching type
+              while (iter.hasNext && !typeMatch) {
+                val catchType = iter.next
+                catchType match {
+                  case catchAll: More => {
+                    stmList.add(new JumpS(new SjumpOne(catchAllLabel)))
+                    typeMatch = true
+                  }
+                  case typeAndParam: TypeAndParam => {
+                    // Compare type of expression to catch handler's type
+                    if (listDeclSpecToListOfTypeSpec(typeAndParam.listdeclaration_specifier_) == thrownType) {
+                      stmList.add(new JumpS(new SjumpOne(catchBlockLabelName(catchType))))
+                      typeMatch = true
+                    }
+                  }
+                  case onlyType: OnlyType => {
+                    if (listDeclSpecToListOfTypeSpec(onlyType.listdeclaration_specifier_) == thrownType) {
+                      stmList.add(new JumpS(new SjumpOne(catchBlockLabelName(catchType))))
+                      typeMatch = true
+                    }
+                  }
+                  case _ => throw new ExceptionTransformException("Invalid type declaration in catch")
+                }
+              }
+
+              if (!typeMatch) {
+                // No handler can catch the exception
+                stmList.add(new JumpS(new SjumpFour))
+              }
+
+              new CompS(new ScompTwo(stmList))
+            }
+            case None => {
+              val stmList = new ListStm
+              stmList.add(setExceptionFlag)
+              stmList.add(new JumpS(new SjumpFour))
+              new CompS(new ScompTwo(stmList))
+            }
           }
           case _ => expStm
         }
+        case _ => expStm
       }
-      copyLocationInformation(expStm, new_stm)
+
+      copyLocationInformation(expStm, newStm)
     }
 
-    override def visit(compStm: ScompTwo, arg: Any): ScompTwo = {
+    override def visit(compStm: ScompTwo, arg: Option[ListParameter_declaration]): ScompTwo = {
       val stms = new ListStm
 
       for (stm <- compStm.liststm_.asScala) {
@@ -462,44 +535,14 @@ object CCAstExceptionTransformer {
             val tryStmList = new ListStm
             tryBlock match {
               case empty: ScompOne => {}
-              case stmts: ScompTwo => {
-                for (stm <- stmts.liststm_.asScala) {
-                  stm match {
-                    case exprS: ExprS => exprS.expression_stm_ match {
-                      case sExprTwo: SexprTwo => sExprTwo.exp_ match {
-                        case eThrow: Ethrow => {
-                          // Handle throw statements
-                          val thrownType = typeOfThrownExp(eThrow.exp_)
-
-                          var typeMatch = false
-                          val iter = catchTypes.asScala.iterator
-
-                          // Check the handlers in order for a matching type
-                          while (iter.hasNext && !typeMatch) {
-                            val catchType = iter.next
-                            catchType match {
-                              case catchAll: More => {
-                                tryStmList.add(setExceptionFlag)
-                                tryStmList.add(new JumpS(new SjumpOne(catchAllLabel)))
-                                typeMatch = true
-                              }
-                              case typeAndParam: TypeAndParam => {
-                                // Compare type of expression to catch handler's type
-                                if (listDeclSpecToListOfTypeSpec(typeAndParam.listdeclaration_specifier_) == thrownType) {
-                                  tryStmList.add(setExceptionFlag)
-                                  tryStmList.add(new JumpS(new SjumpOne(catchBlockLabelName(catchType))))
-                                  typeMatch = true
-                                }
-                              }
-                              case _ => throw new ExceptionTransformException("Invalid type declaration in catch")
-                            }
-                          }
-                        }
-                        case _ => { tryStmList.add(stm.accept(this, arg)) }
-                      }
-                      case _ => { tryStmList.add(stm.accept(this, arg)) }
+              case sCompTwo: ScompTwo => {               
+                val newSComp = sCompTwo.accept(this, Some(catchTypes))
+                newSComp match {
+                  case _: ScompOne => {}
+                  case newSCompTwo: ScompTwo => {
+                    for (stm <- newSCompTwo.liststm_.asScala) {
+                      tryStmList.add(stm)
                     }
-                    case _ => { tryStmList.add(stm.accept(this, arg)) }
                   }
                 }
               }
@@ -529,7 +572,7 @@ object CCAstExceptionTransformer {
                         case _: ScompOne => {}
                         case newSCompTwo: ScompTwo => {
                           for (stm <- newSCompTwo.liststm_.asScala) {
-                            catchStmList.add(stm.accept(this, arg))
+                            catchStmList.add(stm)
                           }
                         }
                       }
