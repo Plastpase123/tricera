@@ -1,0 +1,16 @@
+#!/bin/sh
+
+TESTS="basic-no-exception.cpp \
+       throw-control-flow.cpp \
+       basic-handle-exception-value.cpp \
+       basic-uncaught-exception.cpp \
+       nested-exception-propagation.cpp \
+       nested-correct-catch.cpp \
+       overwrite-exception-value.cpp \
+       nested-sequential-try-blocks.cpp"
+
+for name in $TESTS; do
+  echo
+  echo $name
+  $TRI_CMD -abstract:off "$@" $name 2>&1 | grep -v 'at '
+done
