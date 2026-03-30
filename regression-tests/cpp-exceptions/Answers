@@ -22,3 +22,6 @@ SAFE
 
 nested-sequential-try-blocks.cpp
 SAFE
+
+basic-catch-function-call.cpp
+SAFE
