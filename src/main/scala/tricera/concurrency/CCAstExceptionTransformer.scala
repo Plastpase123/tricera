@@ -71,11 +71,11 @@ object CCAstExceptionTransformer {
       case t: Tsigned => "signed"
       case t: Tunsigned => "unsigned"
       case t: Tstruct => t.struct_or_union_spec_ match {
-        case tagType: TagType => "struct" + tagType.cident_
+        case tagType: TagType => "struct" + "_" + tagType.cident_
         case _ => throw new ExceptionTransformException("Invalid parameter declaration in catch")
       }
       case t: Tenum => t.enum_specifier_ match {
-        case enumVar: EnumVar => "enum" + enumVar.cident_
+        case enumVar: EnumVar => "enum" + "_" + enumVar.cident_
         case _ => throw new ExceptionTransformException("Invalid parameter declaration in catch")
       }
       case _ => throw new ExceptionTransformException("Not supported type")
@@ -535,7 +535,15 @@ object CCAstExceptionTransformer {
 
     override def visit(funcDef: Afunc, arg: (String, Stack[ListBuffer[Parameter_declaration]], Stack[Int])): External_declaration = {
       val funcName = funcDef.accept(getName, ())
-      copyLocationInformation(funcDef, new Afunc(funcDef.function_def_.accept(this, (funcName, new Stack[ListBuffer[Parameter_declaration]], new Stack[Int]))))
+      copyLocationInformation(
+        funcDef,
+        new Afunc(
+          funcDef.function_def_.accept(
+            this,
+            (funcName, new Stack[ListBuffer[Parameter_declaration]], new Stack[Int])
+          )
+        )
+      )
     }
 
     private def findMatchingCatch(
@@ -613,6 +621,81 @@ object CCAstExceptionTransformer {
       val listStm = new ListStm
       listStm.add(new SelS(switchExceptionTypeCatch(cases)))
       new SelS(ifStm(new Evar(exceptionFlagVarName), new CompS(new ScompTwo(listStm)), None))
+    }
+
+    override def visit(decStm: DecS, arg: (String, Stack[ListBuffer[Parameter_declaration]], Stack[Int])): Stm = {
+      val (funcName, catchTypesStack, tryNumberStack) = arg
+      decStm.dec_ match {
+        case dec: Declarators => {
+          val listInitDec = dec.listinit_declarator_
+          if (listInitDec.size() == 1) {
+            listInitDec.getFirst() match {
+              case initDecl: InitDecl => initDecl.initializer_ match {
+                case initExp: InitExpr => initExp.exp_ match {
+                  case eFunk: Efunk => {
+                    val stmList = new ListStm
+                    val calledFuncName = eFunk.accept(getName, ())
+
+                    if (funcExceptionTypeData.contains(calledFuncName)) {
+                      val exceptionCheckIfStm = funcCallExceptionCheckIfStm(funcName, decStm, eFunk, catchTypesStack, tryNumberStack)
+
+                      val funcRetType = funcReturnTypesMap.get(calledFuncName) match {
+                        case Some(v) => v
+                        case None => throw new ExceptionTransformException("Missing return type information for function" + calledFuncName)
+                      }
+
+                      val retVarName = "__" + calledFuncName + "_ret_" + getId()
+                      stmList.add(declarationAssignmentStm(funcRetType, retVarName, eFunk))
+                      stmList.add(exceptionCheckIfStm)
+
+                      val listInitDecl = new ListInit_declarator
+                      listInitDecl.add(new InitDecl(initDecl.declarator_, new InitExpr(new Evar(retVarName))))
+                      stmList.add(
+                        new DecS(new Declarators(dec.listdeclaration_specifier_, listInitDecl, new ListExtra_specifier))
+                      )
+                      new CompS(new ScompTwo(stmList))
+                    } else {
+                      decStm
+                    }
+                  }
+                  case eFunk: Efunkpar => {
+                    val stmList = new ListStm
+                    val calledFuncName = eFunk.accept(getName, ())
+
+                    if (funcExceptionTypeData.contains(calledFuncName)) {
+                      val exceptionCheckIfStm = funcCallExceptionCheckIfStm(funcName, decStm, eFunk, catchTypesStack, tryNumberStack)
+
+                      val funcRetType = funcReturnTypesMap.get(calledFuncName) match {
+                        case Some(v) => v
+                        case None => throw new ExceptionTransformException("Missing return type information for function" + calledFuncName)
+                      }
+
+                      val retVarName = "__" + calledFuncName + "_ret_" + getId()
+                      stmList.add(declarationAssignmentStm(funcRetType, retVarName, eFunk))
+                      stmList.add(exceptionCheckIfStm)
+
+                      val listInitDecl = new ListInit_declarator
+                      listInitDecl.add(new InitDecl(initDecl.declarator_, new InitExpr(new Evar(retVarName))))
+                      stmList.add(
+                        new DecS(new Declarators(dec.listdeclaration_specifier_, listInitDecl, new ListExtra_specifier))
+                      )
+                      new CompS(new ScompTwo(stmList))
+                    } else {
+                      decStm
+                    }
+                  }
+                  case _ => decStm
+                } 
+                case _ => decStm
+              }
+              case _ => decStm
+            }
+          } else {
+            decStm
+          }
+        }
+        case _ => decStm
+      }
     }
 
     override def visit(expStm: ExprS, arg: (String, Stack[ListBuffer[Parameter_declaration]], Stack[Int])): Stm = {
