@@ -180,11 +180,11 @@ object CCAstExceptionTransformer {
     val funcReturnTypes = collectFuncReturnTypes(program)
     val exceptionVarTransformedProgram = program.accept(new ExceptionVariableTransformer, None)
     val transformer = new ExceptionTransformer(collectionResult, funcReturnTypes)
-    val transformed_program = exceptionVarTransformedProgram.accept(transformer, null);
+    val transformedProgram = exceptionVarTransformedProgram.accept(transformer, null);
 
     println("=== EXCEPTION TRANSFORMED PROGRAM === ")
-    println(printer print transformed_program)
-    return transformed_program
+    println(printer print transformedProgram)
+    return transformedProgram
   }
 
   private def collectExceptionTypes(program: Program): ExceptionTypesCollectionResult = {
@@ -427,6 +427,18 @@ object CCAstExceptionTransformer {
     override def visit(p: Progr, arg: (String, Stack[ListBuffer[Parameter_declaration]], Stack[Int])): Program = {
       val originalProgDecls = p.listexternal_declaration_
       val extDeclarations = new ListExternal_declaration
+      val otherDeclarations = new ListExternal_declaration
+
+      for (dec <- originalProgDecls.asScala) {
+        dec match {
+          case g: Global => {
+            extDeclarations.add(g.accept(this, arg))
+          }
+          case d => {
+            otherDeclarations.add(d.accept(this, arg))
+          }
+        }
+      }
 
       // Enum declaration for exception types
       extDeclarations.add(
@@ -463,8 +475,8 @@ object CCAstExceptionTransformer {
         )
       )
 
-      for (dec <- originalProgDecls.asScala) {
-        extDeclarations.add(dec.accept(this, arg))
+      for (d <- otherDeclarations.asScala) {
+        extDeclarations.add(d)
       }
 
       super.visit(p, arg)
