@@ -7,7 +7,8 @@ TESTS="basic-no-exception.cpp \
        nested-exception-propagation.cpp \
        nested-correct-catch.cpp \
        overwrite-exception-value.cpp \
-       nested-sequential-try-blocks.cpp"
+       nested-sequential-try-blocks.cpp \
+       basic-catch-function-call.cpp"
 
 for name in $TESTS; do
   echo

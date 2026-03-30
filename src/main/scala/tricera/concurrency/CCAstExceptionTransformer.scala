@@ -53,6 +53,12 @@ object CCAstExceptionTransformer {
   private val exceptionTypeEnumName = "ExceptionType";
 
   private val getName = new CCAstGetNameVistor
+  private var counter = 0
+
+  private def getId(): Int = {
+    counter += 1
+    counter
+  }
 
   private def typeSpecToString(typeSpec: Type_specifier): String = {
     typeSpec match {
@@ -99,6 +105,14 @@ object CCAstExceptionTransformer {
       str.append(typeSpecToString(type_))
     }
     str.toString()
+  }
+
+  private def typeLabelName(paramDecl: Parameter_declaration): String = {
+    paramDecl match {
+      case t: OnlyType => typeLabelName(t.listdeclaration_specifier_)
+      case t: TypeAndParam => typeLabelName(t.listdeclaration_specifier_)
+      case _ => throw new ExceptionTransformException("Invalid type as parameter declaration")
+    }
   }
 
   private def createExceptionTypeEnumName(types: ListBuffer[Type_specifier]): String = {
@@ -163,8 +177,9 @@ object CCAstExceptionTransformer {
 
   def transform(program: Program): Program = {
     val collectionResult = collectExceptionTypes(program)
+    val funcReturnTypes = collectFuncReturnTypes(program)
     val exceptionVarTransformedProgram = program.accept(new ExceptionVariableTransformer, None)
-    val transformer = new ExceptionTransformer(collectionResult)
+    val transformer = new ExceptionTransformer(collectionResult, funcReturnTypes)
     val transformed_program = exceptionVarTransformedProgram.accept(transformer, null);
 
     println("=== EXCEPTION TRANSFORMED PROGRAM === ")
@@ -187,6 +202,15 @@ object CCAstExceptionTransformer {
     }
 
     ExceptionTypesCollectionResult(buffer.toMap, exceptionTypes)
+  }
+
+  private def collectFuncReturnTypes(program: Program): MHashMap[String, ListDeclaration_specifier] = {
+    val buffer = new MHashMap[String, ListDeclaration_specifier]
+    val collector = new FuncReturnTypesCollector(buffer)
+    program.accept(collector, null)
+    program.accept(new FuncReturnTypesCollector(buffer), null)
+
+    buffer
   }
 
   private def typeOfThrownExp(thrownExp: Exp): ListBuffer[Type_specifier] = {
@@ -287,6 +311,18 @@ object CCAstExceptionTransformer {
     }
   }
 
+  private class FuncReturnTypesCollector(
+    val funcTypesBuffer: MHashMap[String, ListDeclaration_specifier]
+  ) extends ComposVisitor[ListDeclaration_specifier] {
+    override def visit(func: NewFunc, arg: ListDeclaration_specifier): NewFunc = {
+      val listDecSpec = func.listdeclaration_specifier_
+      val funcName = func.accept(getName, ())
+      funcTypesBuffer.put(funcName, listDecSpec)
+
+      func
+    }
+  }
+
   private class ExceptionVariableTransformer() extends CCAstCopyWithLocation[Option[Parameter_declaration]] {
     override def visit(catchBlock: Scatch, arg: Option[Parameter_declaration]): Catch_stm = {
       val paramDecl = catchBlock.parameter_declaration_
@@ -318,7 +354,8 @@ object CCAstExceptionTransformer {
   }
 
   private class ExceptionTransformer(
-    val exceptionTypeData: ExceptionTypesCollectionResult
+    val exceptionTypeData: ExceptionTypesCollectionResult,
+    val funcReturnTypesMap: MHashMap[String, ListDeclaration_specifier],
   ) extends CCAstCopyWithLocation[(String, Stack[ListBuffer[Parameter_declaration]], Stack[Int])] {
     private val getName = new CCAstGetNameVistor
 
@@ -355,7 +392,6 @@ object CCAstExceptionTransformer {
       }
       val initDecls = new ListInit_declarator
       initDecls.add(new OnlyDecl(new NoPointer(new Name(varName))))
-
       new Global(new Declarators(declSpec, initDecls, new ListExtra_specifier))
     }
 
@@ -375,7 +411,6 @@ object CCAstExceptionTransformer {
       }
 
       declSpecList.add(new Type(new Tstruct(new Tag(new Struct, structName, structDecs))))
-
       new Global(new NoDeclarator(declSpecList, new ListExtra_specifier))
     }
 
@@ -386,7 +421,6 @@ object CCAstExceptionTransformer {
         enumeratorList.add(new Plain(variant))
       }
       declSpecList.add(new Type(new Tenum(new EnumName(enumName, enumeratorList))))
-
       new Global(new NoDeclarator(declSpecList, new ListExtra_specifier))
     }
 
@@ -463,6 +497,12 @@ object CCAstExceptionTransformer {
       )
     }
 
+    private def declarationAssignmentStm(funcRetType: ListDeclaration_specifier, varName: String, funcCallExp: Exp): Stm = {
+      val listInitDecl = new ListInit_declarator
+      listInitDecl.add(new InitDecl(new NoPointer(new Name(varName)), new InitExpr(funcCallExp)))
+      new DecS(new Declarators(funcRetType, listInitDecl, new ListExtra_specifier))
+    }
+
     private def gotoStm(labelName: String): JumpS = {
       new JumpS(new SjumpOne(labelName))
     }
@@ -471,9 +511,108 @@ object CCAstExceptionTransformer {
       new LabelS(new SlabelOne(labelName, new ExprS(new SexprOne)))
     }
 
+    private def ifStm(exp: Exp, stm: Stm, optStm: Option[Stm]): Selection_stm = {
+      optStm match {
+        case None => new SselOne(exp, stm)
+        case Some(elseStm) => new SselTwo(exp, stm, elseStm)
+      }
+    }
+
+    private def switchExceptionTypeCatch(cases: ListBuffer[(ListBuffer[Type_specifier], Stm)]): Selection_stm = {
+      val stmList = new ListStm
+
+      for ((type_, stm) <- cases) {
+        stmList.add(
+          new LabelS(new SlabelTwo(new Especial(new Evar(createExceptionTypeEnumName(type_))), stm))
+        )
+      }
+      
+      new SselThree(
+        new Evar(exceptionTypeVarName),
+        new CompS(new ScompTwo(stmList))
+      )
+    }
+
     override def visit(funcDef: Afunc, arg: (String, Stack[ListBuffer[Parameter_declaration]], Stack[Int])): External_declaration = {
       val funcName = funcDef.accept(getName, ())
       copyLocationInformation(funcDef, new Afunc(funcDef.function_def_.accept(this, (funcName, new Stack[ListBuffer[Parameter_declaration]], new Stack[Int]))))
+    }
+
+    private def findMatchingCatch(
+      funcName: String,
+      thrownType: ListBuffer[Type_specifier],
+      catchTypesStack: Stack[ListBuffer[Parameter_declaration]],
+      tryNumberStack: Stack[Int]
+    ): Option[String] = {
+        val catchTypesStackCopy = catchTypesStack.clone()
+        val tryNumberStackCopy = tryNumberStack.clone()
+
+        while (catchTypesStackCopy.size > 0) {
+          val catchTypes = catchTypesStackCopy.pop()
+          val iter = catchTypes.iterator
+
+          // Check the handlers in order for a matching type
+          while (iter.hasNext) {
+            val catchType = iter.next
+            catchType match {
+              case catchAll: More => {
+                return Some(catchBlockLabelName(funcName, catchType, tryNumberStackCopy))
+              }
+              case typeAndParam: TypeAndParam => {
+                // Compare type of expression to catch handler's type
+                if (listDeclSpecToListOfTypeSpec(typeAndParam.listdeclaration_specifier_) == thrownType) {
+                  return Some(catchBlockLabelName(funcName, catchType, tryNumberStackCopy))
+                }
+              }
+              case onlyType: OnlyType => {
+                if (listDeclSpecToListOfTypeSpec(onlyType.listdeclaration_specifier_) == thrownType) {
+                  return Some(catchBlockLabelName(funcName, catchType, tryNumberStackCopy))
+                }
+              }
+              case _ => throw new ExceptionTransformException("Invalid type declaration in catch")
+            }
+          }
+          tryNumberStackCopy.pop()
+        }
+
+        None
+    }
+
+    private def funcCallExceptionCheckIfStm(
+      outerFuncName: String,
+      entireStm: Stm,
+      funcCallExp: Exp,
+      catchTypesStack: Stack[ListBuffer[Parameter_declaration]],
+      tryNumberStack: Stack[Int]
+    ): Stm = {
+      val calledFuncName = funcCallExp.accept(getName, ())
+      val funcExceptionTypes = funcExceptionTypeData.get(calledFuncName) match {
+        case Some(v) => v
+        case None => throw new ExceptionTransformException("Missing exceptiontype data for function")
+      }
+      val stmList = new ListStm
+      val cases = new ListBuffer[(ListBuffer[Type_specifier], Stm)]
+
+      // For every possible exception type: Determine the correct catch handler (if there exists one)
+      for (exceptionType <- funcExceptionTypes) {
+        findMatchingCatch(outerFuncName, exceptionType, catchTypesStack, tryNumberStack) match {
+          case Some(catchLabel) => {
+            cases.addOne((exceptionType, gotoStm(catchLabel)))
+          }
+          case None => {
+            // No handler can catch the exception
+            if (outerFuncName == "main") {
+              cases.addOne((exceptionType, abortCall))
+            } else {
+              cases.addOne((exceptionType, emptyReturnStm))
+            }
+          }
+        }
+      }
+
+      val listStm = new ListStm
+      listStm.add(new SelS(switchExceptionTypeCatch(cases)))
+      new SelS(ifStm(new Evar(exceptionFlagVarName), new CompS(new ScompTwo(listStm)), None))
     }
 
     override def visit(expStm: ExprS, arg: (String, Stack[ListBuffer[Parameter_declaration]], Stack[Int])): Stm = {
@@ -490,61 +629,95 @@ object CCAstExceptionTransformer {
             stmList.add(setExceptionType(thrownType))
             stmList.add(setExceptionValue(thrownType, throwExp.exp_))
 
-            if (tryNumberStack.size > 0) {
-              val catchTypesStackCopy = catchTypesStack.clone()
-              val tryNumberStackCopy = tryNumberStack.clone()
-              var typeMatch = false
-
-              while (catchTypesStackCopy.size > 0 && !typeMatch) {
-                val catchTypes = catchTypesStackCopy.pop()
-                val iter = catchTypes.iterator
-
-                // Check the handlers in order for a matching type
-                while (iter.hasNext && !typeMatch) {
-                  val catchType = iter.next
-                  catchType match {
-                    case catchAll: More => {
-                      stmList.add(gotoStm(catchBlockLabelName(funcName, catchType, tryNumberStackCopy)))
-                      typeMatch = true
-                    }
-                    case typeAndParam: TypeAndParam => {
-                      // Compare type of expression to catch handler's type
-                      if (listDeclSpecToListOfTypeSpec(typeAndParam.listdeclaration_specifier_) == thrownType) {
-                        stmList.add(gotoStm(catchBlockLabelName(funcName, catchType, tryNumberStackCopy)))
-                        typeMatch = true
-                      }
-                    }
-                    case onlyType: OnlyType => {
-                      if (listDeclSpecToListOfTypeSpec(onlyType.listdeclaration_specifier_) == thrownType) {
-                        stmList.add(gotoStm(catchBlockLabelName(funcName, catchType, tryNumberStackCopy)))
-                        typeMatch = true
-                      }
-                    }
-                    case _ => throw new ExceptionTransformException("Invalid type declaration in catch")
-                  }
-                }
-                tryNumberStackCopy.pop()
-              }
-                if (!typeMatch) {
+            findMatchingCatch(funcName, thrownType, catchTypesStack, tryNumberStack) match {
+              case Some(catchLabel) => {
+                stmList.add(gotoStm(catchLabel))
+              } case None => {
                   // No handler can catch the exception
                   if (funcName == "main") {
                     stmList.add(abortCall)
                   } else {
                     stmList.add(emptyReturnStm)
                   }
+              }
+            }
+
+            new CompS(new ScompTwo(stmList))
+          }
+          case eFunk: Efunk => {
+            val stmList = new ListStm
+            val calledFuncName = eFunk.accept(getName, ())
+
+            if (funcExceptionTypeData.contains(calledFuncName)) {
+              val exceptionCheckIfStm = funcCallExceptionCheckIfStm(funcName, expStm, eFunk, catchTypesStack, tryNumberStack)
+              stmList.add(expStm)
+              stmList.add(exceptionCheckIfStm)
+              new CompS(new ScompTwo(stmList))
+            } else {
+              expStm
+            }
+          }
+          case eFunkPar: Efunkpar => {
+            val stmList = new ListStm
+            val calledFuncName = eFunkPar.accept(getName, ())
+
+            if (funcExceptionTypeData.contains(calledFuncName)) {
+              val exceptionCheckIfStm = funcCallExceptionCheckIfStm(funcName, expStm, eFunkPar, catchTypesStack, tryNumberStack)
+              stmList.add(expStm)
+              stmList.add(exceptionCheckIfStm)
+              new CompS(new ScompTwo(stmList))
+            } else {
+              expStm
+            }
+          }
+          case eAssign: Eassign => eAssign.exp_2 match {
+            case eFunk: Efunk => {
+              val stmList = new ListStm
+              val calledFuncName = eFunk.accept(getName, ())
+
+              if (funcExceptionTypeData.contains(calledFuncName)) {
+                val exceptionCheckIfStm = funcCallExceptionCheckIfStm(funcName, expStm, eFunk, catchTypesStack, tryNumberStack)
+                val lhs = eAssign.exp_1
+                val assignOp = eAssign.assignment_op_
+
+                val funcRetType = funcReturnTypesMap.get(calledFuncName) match {
+                  case Some(v) => v
+                  case None => throw new ExceptionTransformException("Missing return type information for function" + calledFuncName)
                 }
 
+                val retVarName = "__" + calledFuncName + "_ret_" + getId()
+                stmList.add(declarationAssignmentStm(funcRetType, retVarName, eFunk))
+                stmList.add(exceptionCheckIfStm)
+                stmList.add(new ExprS(new SexprTwo(new Eassign(lhs, assignOp, new Evar(retVarName)))))
                 new CompS(new ScompTwo(stmList))
-            } else {
-                // Throw is not inside a try block
-                if (funcName == "main") {
-                  stmList.add(abortCall)
-                } else {
-                  stmList.add(emptyReturnStm)
-                }
-                new CompS(new ScompTwo(stmList))
+              } else {
+                expStm
               }
-            // }
+            }
+            case eFunk: Efunkpar => {
+              val stmList = new ListStm
+              val calledFuncName = eFunk.accept(getName, ())
+
+              if (funcExceptionTypeData.contains(calledFuncName)) {
+                val exceptionCheckIfStm = funcCallExceptionCheckIfStm(funcName, expStm, eFunk, catchTypesStack, tryNumberStack)
+                val lhs = eAssign.exp_1
+                val assignOp = eAssign.assignment_op_
+
+                val funcRetType = funcReturnTypesMap.get(calledFuncName) match {
+                  case Some(v) => v
+                  case None => throw new ExceptionTransformException("Missing return type information for function" + calledFuncName)
+                }
+
+                val retVarName = "__" + calledFuncName + "_ret_" + getId()
+                stmList.add(declarationAssignmentStm(funcRetType, retVarName, eFunk))
+                stmList.add(exceptionCheckIfStm)
+                stmList.add(new ExprS(new SexprTwo(new Eassign(lhs, assignOp, new Evar(retVarName)))))
+                new CompS(new ScompTwo(stmList))
+              } else {
+                expStm
+              }
+            }
+            case _ => expStm
           }
           case _ => expStm
         }
@@ -600,10 +773,10 @@ object CCAstExceptionTransformer {
           }
         }
       }
+
       tryStmList.add(gotoStm(afterCatchLabelName(funcName, tryNumberStack)))
       val newTryBlock = new ScompTwo(tryStmList)
       stmList.add(new CompS(newTryBlock))
-
 
       // Transform catch handler
       for (catchBlock <- catchBlocks.asScala) {
