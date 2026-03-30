@@ -25,3 +25,6 @@ SAFE
 
 basic-catch-function-call.cpp
 SAFE
+
+throw-struct.cpp
+SAFE
