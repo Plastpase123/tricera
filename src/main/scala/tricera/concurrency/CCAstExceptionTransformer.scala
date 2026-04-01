@@ -170,6 +170,12 @@ object CCAstExceptionTransformer {
     str.toString()
   }
 
+  private def declarationAssignmentStm(t: ListDeclaration_specifier, varName: String, exp: Exp): Stm = {
+    val listInitDecl = new ListInit_declarator
+    listInitDecl.add(new InitDecl(new NoPointer(new Name(varName)), new InitExpr(exp)))
+    new DecS(new Declarators(t, listInitDecl, new ListExtra_specifier))
+  }
+
   private case class ExceptionTypesCollectionResult(
     funcExceptionTypes: Map[String, FuncExceptionTypeData],
     exceptionTypes: Set[ListBuffer[Type_specifier]]
@@ -178,9 +184,8 @@ object CCAstExceptionTransformer {
   def transform(program: Program): Program = {
     val collectionResult = collectExceptionTypes(program)
     val funcReturnTypes = collectFuncReturnTypes(program)
-    val exceptionVarTransformedProgram = program.accept(new ExceptionVariableTransformer, None)
     val transformer = new ExceptionTransformer(collectionResult, funcReturnTypes)
-    val transformedProgram = exceptionVarTransformedProgram.accept(transformer, null);
+    val transformedProgram = program.accept(transformer, null);
 
     println("=== EXCEPTION TRANSFORMED PROGRAM === ")
     println(printer print transformedProgram)
@@ -304,7 +309,7 @@ object CCAstExceptionTransformer {
       func
     }
 
-    override def visit(throwExp: Ethrow, arg: FuncExceptionTypeData): Ethrow = {
+    override def visit(throwExp: EthrowOne, arg: FuncExceptionTypeData): EthrowOne = {
       val thrownType = typeOfThrownExp(throwExp.exp_)
       arg.addOne(thrownType)
       throwExp
@@ -320,36 +325,6 @@ object CCAstExceptionTransformer {
       funcTypesBuffer.put(funcName, listDecSpec)
 
       func
-    }
-  }
-
-  private class ExceptionVariableTransformer() extends CCAstCopyWithLocation[Option[Parameter_declaration]] {
-    override def visit(catchBlock: Scatch, arg: Option[Parameter_declaration]): Catch_stm = {
-      val paramDecl = catchBlock.parameter_declaration_
-      copyLocationInformation(
-        catchBlock,
-        new Scatch(
-          catchBlock.parameter_declaration_,
-          catchBlock.compound_stm_.accept(this, Some(paramDecl))
-        )
-      )
-    }
-
-    override def visit(eVar: Evar, arg: Option[Parameter_declaration]): Exp = {
-      arg match {
-        case Some(exceptionTypeAndParam: TypeAndParam) => {
-          val exceptionVarName = exceptionTypeAndParam.accept(getName, ())
-          if (exceptionVarName == eVar.cident_) {
-            // Replace with the global exception value
-            val exceptionType = exceptionTypeAndParam.listdeclaration_specifier_
-            val fieldName = createExceptionStructField(exceptionType)
-            copyLocationInformation(eVar, new Eselect(new Evar(exceptionValueVarName), fieldName))
-          } else {
-            eVar
-          }
-        }
-        case _ => eVar
-      }
     }
   }
 
@@ -507,12 +482,6 @@ object CCAstExceptionTransformer {
           )
         )
       )
-    }
-
-    private def declarationAssignmentStm(funcRetType: ListDeclaration_specifier, varName: String, funcCallExp: Exp): Stm = {
-      val listInitDecl = new ListInit_declarator
-      listInitDecl.add(new InitDecl(new NoPointer(new Name(varName)), new InitExpr(funcCallExp)))
-      new DecS(new Declarators(funcRetType, listInitDecl, new ListExtra_specifier))
     }
 
     private def gotoStm(labelName: String): JumpS = {
@@ -715,7 +684,7 @@ object CCAstExceptionTransformer {
 
       val newStm = expStm.expression_stm_ match {
         case nonEmptyExpStm: SexprTwo => nonEmptyExpStm.exp_ match {
-          case throwExp: Ethrow => {
+          case throwExp: EthrowOne => {
             val stmList = new ListStm
             val thrownType = typeOfThrownExp(throwExp.exp_)
 
@@ -879,16 +848,36 @@ object CCAstExceptionTransformer {
         catchBlock match {
           case catchStm: Scatch => {
             val paramDecl = catchStm.parameter_declaration_
-            
             val compoundStm = catchStm.compound_stm_
             val blockName = catchBlockLabelName(funcName, paramDecl, tryNumberStack)
+
             compoundStm match {
               case empty: ScompOne => {}
               case sCompTwo: ScompTwo => {
-              
+                // Declaration for exception value
+                paramDecl match {
+                  case typeAndParam: TypeAndParam => {
+                    val varName = paramDecl.accept(getName, ())
+                    catchStmList.add(
+                      declarationAssignmentStm(
+                        typeAndParam.listdeclaration_specifier_,
+                        varName,
+                        new Eselect(
+                          new Evar(
+                            exceptionValueVarName
+                          ),
+                          createExceptionStructField(typeAndParam.listdeclaration_specifier_)
+                        )
+                      )
+                    )
+                  }
+                  case _ => {}
+                }
+
                 // Reset exception flag
                 catchStmList.add(unsetExceptionFlag)
 
+                // Transform the block
                 val newSComp = sCompTwo.accept(this, arg)
                 newSComp match {
                   case _: ScompOne => {}
