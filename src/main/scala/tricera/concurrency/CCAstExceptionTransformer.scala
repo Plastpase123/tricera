@@ -177,7 +177,7 @@ object CCAstExceptionTransformer {
     program.accept(collector, null)
 
     val exceptionTypes = Set[ListBuffer[Type_specifier]]()
-    program.accept(new CatchExceptionTypesCollector(exceptionTypes), exceptionTypes)
+    program.accept(new CatchExceptionTypesCollector(exceptionTypes), null)
 
     for ((_, typeSet) <- buffer) {
       for (typeSpecList <- typeSet) {
@@ -237,11 +237,12 @@ object CCAstExceptionTransformer {
 
   private class CatchExceptionTypesCollector(
     val exceptionTypesBuffer: Set[ListBuffer[Type_specifier]]
-  ) extends ComposVisitor[Set[ListBuffer[Type_specifier]]] {
-    override def visit(catchStm: Scatch, arg: Set[ListBuffer[Type_specifier]]): Catch_stm = {
+  ) extends ComposVisitor[Any] {
+    override def visit(catchStm: Scatch, arg: Any): Catch_stm = {
       val paramDecl = catchStm.parameter_declaration_
       val block = catchStm.compound_stm_
       val typeSpecList = new ListBuffer[Type_specifier]
+
       paramDecl match {
         case onlyType: OnlyType => {
           for (declSpec <- onlyType.listdeclaration_specifier_.asScala) {
@@ -264,9 +265,11 @@ object CCAstExceptionTransformer {
         case _ => {}
       }
 
-      arg.add(typeSpecList)
-      block.accept(this, arg)
+      if (!typeSpecList.isEmpty) {
+        exceptionTypesBuffer.add(typeSpecList)
+      }
 
+      block.accept(this, arg)
       catchStm
     }
   }
@@ -310,7 +313,7 @@ object CCAstExceptionTransformer {
   private class ExceptionTransformer(
     val exceptionTypeData: ExceptionTypesCollectionResult,
     val funcReturnTypesMap: MHashMap[String, ListDeclaration_specifier],
-  ) extends CCAstCopyWithLocation[(String, Stack[ListBuffer[(Parameter_declaration, Int)]])] {
+  ) extends CCAstCopyWithLocation[(String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])] {
     private val getName = new CCAstGetNameVistor
 
     private val funcExceptionTypeData = exceptionTypeData.funcExceptionTypes
@@ -378,7 +381,7 @@ object CCAstExceptionTransformer {
       new Global(new NoDeclarator(declSpecList, new ListExtra_specifier))
     }
 
-    override def visit(p: Progr, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]])): Program = {
+    override def visit(p: Progr, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])): Program = {
       val originalProgDecls = p.listexternal_declaration_
       val extDeclarations = new ListExternal_declaration
       val otherDeclarations = new ListExternal_declaration
@@ -486,21 +489,21 @@ object CCAstExceptionTransformer {
           new LabelS(new SlabelTwo(new Especial(new Evar(createExceptionTypeEnumName(type_))), stm))
         )
       }
-      
+
       new SselThree(
         new Evar(exceptionTypeVarName),
         new CompS(new ScompTwo(stmList))
       )
     }
 
-    override def visit(funcDef: Afunc, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]])): External_declaration = {
+    override def visit(funcDef: Afunc, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])): External_declaration = {
       val funcName = funcDef.accept(getName, ())
       copyLocationInformation(
         funcDef,
         new Afunc(
           funcDef.function_def_.accept(
             this,
-            (funcName, new Stack[ListBuffer[(Parameter_declaration, Int)]])
+            (funcName, new Stack[ListBuffer[(Parameter_declaration, Int)]], None)
           )
         )
       )
@@ -543,6 +546,99 @@ object CCAstExceptionTransformer {
         None
     }
 
+    private def findMatchingCatch(
+      funcName: String,
+      paramDecl: Parameter_declaration,
+      catchStack: Stack[(ListBuffer[(Parameter_declaration, Int)])],
+    ): Option[String] = {
+        val catchStackCopy = catchStack.clone()
+
+        paramDecl match {
+          case t: OnlyType => {
+            while (catchStackCopy.size > 0) {
+              val catchTypes = catchStackCopy.pop()
+              val iter = catchTypes.iterator
+
+              // Check the handlers in order for a matching type
+              while (iter.hasNext) {
+                val (catchType, catchId) = iter.next
+                catchType match {
+                  case catchAll: More => {
+                    return Some(catchBlockLabelName(funcName, catchType, catchId))
+                  }
+                  case typeAndParam: TypeAndParam => {
+                    // Compare type of expression to catch handler's type
+                    if (typeAndParam.listdeclaration_specifier_ == t.listdeclaration_specifier_) {
+                      return Some(catchBlockLabelName(funcName, catchType, catchId))
+                    }
+                  }
+                  case onlyType: OnlyType => {
+                    if (onlyType.listdeclaration_specifier_ == t.listdeclaration_specifier_) {
+                      return Some(catchBlockLabelName(funcName, catchType, catchId))
+                    }
+                  }
+                  case _ => throw new ExceptionTransformException("Invalid type declaration in catch")
+                }
+              }
+            }
+          }
+          case t: TypeAndParam => {
+            while (catchStackCopy.size > 0) {
+              val catchTypes = catchStackCopy.pop()
+              val iter = catchTypes.iterator
+
+              // Check the handlers in order for a matching type
+              while (iter.hasNext) {
+                val (catchType, catchId) = iter.next
+                catchType match {
+                  case catchAll: More => {
+                    return Some(catchBlockLabelName(funcName, catchType, catchId))
+                  }
+                  case typeAndParam: TypeAndParam => {
+                    // Compare type of expression to catch handler's type
+                    if (typeAndParam.listdeclaration_specifier_ == t.listdeclaration_specifier_) {
+                      return Some(catchBlockLabelName(funcName, catchType, catchId))
+                    }
+                  }
+                  case onlyType: OnlyType => {
+                    if (onlyType.listdeclaration_specifier_ == t.listdeclaration_specifier_) {
+                      return Some(catchBlockLabelName(funcName, catchType, catchId))
+                    }
+                  }
+                  case _ => throw new ExceptionTransformException("Invalid type declaration in catch")
+                }
+              }
+            }
+          }
+        }
+
+        None
+    }
+
+    private def switchForRethrow(outerFuncName: String, catchStack: Stack[ListBuffer[(Parameter_declaration, Int)]]): Selection_stm = {
+      val stmList = new ListStm
+      val cases = new ListBuffer[(ListBuffer[Type_specifier], Stm)]
+
+      // For every possible exception type: Determine the correct catch handler (if there exists one)
+      for (exceptionType <- exceptionTypes) {
+        findMatchingCatch(outerFuncName, exceptionType, catchStack) match {
+          case Some(catchLabel) => {
+            cases.addOne((exceptionType, gotoStm(catchLabel)))
+          }
+          case None => {
+            // No handler can catch the exception
+            if (outerFuncName == "main") {
+              cases.addOne((exceptionType, abortCall))
+            } else {
+              cases.addOne((exceptionType, emptyReturnStm))
+            }
+          }
+        }
+      }
+
+      switchExceptionTypeCatch(cases)
+    }
+
     private def funcCallExceptionCheckIfStm(
       outerFuncName: String,
       entireStm: Stm,
@@ -579,8 +675,8 @@ object CCAstExceptionTransformer {
       new SelS(ifStm(new Evar(exceptionFlagVarName), new CompS(new ScompTwo(listStm)), None))
     }
 
-    override def visit(decStm: DecS, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]])): Stm = {
-      val (funcName, catchStack) = arg
+    override def visit(decStm: DecS, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])): Stm = {
+      val (funcName, catchStack, catchDecl) = arg
       decStm.dec_ match {
         case dec: Declarators => {
           val listInitDec = dec.listinit_declarator_
@@ -654,8 +750,8 @@ object CCAstExceptionTransformer {
       }
     }
 
-    override def visit(expStm: ExprS, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]])): Stm = {
-      val (funcName, catchStack) = arg
+    override def visit(expStm: ExprS, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])): Stm = {
+      val (funcName, catchStack, optCatchDecl) = arg
 
       val newStm = expStm.expression_stm_ match {
         case nonEmptyExpStm: SexprTwo => nonEmptyExpStm.exp_ match {
@@ -678,6 +774,41 @@ object CCAstExceptionTransformer {
                   } else {
                     stmList.add(emptyReturnStm)
                   }
+              }
+            }
+
+            new CompS(new ScompTwo(stmList))
+          }
+          case emptyThrow: EthrowTwo => {
+            val stmList = new ListStm
+            stmList.add(setExceptionFlag)
+
+            optCatchDecl match {
+              case Some(catchDecl) => {
+                catchDecl match {
+                  case _: OnlyType | _: TypeAndParam => {
+                    findMatchingCatch(funcName, catchDecl, catchStack) match {
+                      case Some(catchLabel) => {
+                        stmList.add(gotoStm(catchLabel))
+                      } case None => {
+                        // No handler can catch the exception
+                        if (funcName == "main") {
+                          stmList.add(abortCall)
+                        } else {
+                          stmList.add(emptyReturnStm)
+                        }
+                      }
+                    }
+                  }
+                  case _: More => {
+                    stmList.add(new SelS(switchForRethrow(funcName, catchStack)))
+                  }
+                }
+              }
+              case None => {
+                // Empty throw statement not inside catch
+                // no exception to rethrow
+                stmList.add(abortCall)
               }
             }
 
@@ -766,8 +897,8 @@ object CCAstExceptionTransformer {
       copyLocationInformation(expStm, newStm)
     }
 
-    override def visit(tryCatchStm: TryCatchS, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]])): Stm = {
-      val (funcName, catchStack) = arg
+    override def visit(tryCatchStm: TryCatchS, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])): Stm = {
+      val (funcName, catchStack, optCatchDecl) = arg
       val stmList = new ListStm
       val catchTypes = new ListBuffer[(Parameter_declaration, Int)]
       val (tryBlock, catchBlocks) = tryCatchStm.try_stm_ match {
@@ -802,7 +933,7 @@ object CCAstExceptionTransformer {
       tryBlock match {
         case empty: ScompOne => {}
         case sCompTwo: ScompTwo => {
-          val newSComp = sCompTwo.accept(this, (funcName, catchStackCopy))
+          val newSComp = sCompTwo.accept(this, (funcName, catchStackCopy, optCatchDecl))
           newSComp match {
             case _: ScompOne => {}
             case newSCompTwo: ScompTwo => {
@@ -857,7 +988,7 @@ object CCAstExceptionTransformer {
                 catchStmList.add(unsetExceptionFlag)
 
                 // Transform the block
-                val newSComp = sCompTwo.accept(this, arg)
+                val newSComp = sCompTwo.accept(this, (funcName, catchStack, Some(paramDecl)))
                 newSComp match {
                   case _: ScompOne => {}
                   case newSCompTwo: ScompTwo => {
@@ -881,14 +1012,13 @@ object CCAstExceptionTransformer {
       copyLocationInformation(tryCatchStm, new CompS(new ScompTwo(stmList)))
     }
 
-    override def visit(compStm: ScompTwo, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]])): ScompTwo = {
-      val (funcName, catchStack) = arg
+    override def visit(compStm: ScompTwo, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])): ScompTwo = {
       val stms = new ListStm
 
       for (stm <- compStm.liststm_.asScala) {
         stm match {
           case tryStm: TryCatchS => {
-            val transformedTryStm = tryStm.accept(this, (funcName, catchStack))
+            val transformedTryStm = tryStm.accept(this, arg)
 
             transformedTryStm match {
               case compS: CompS => compS.compound_stm_ match {
