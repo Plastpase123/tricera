@@ -395,7 +395,8 @@ class TriCeraParameters extends GlobalParameters {
 
     |Horn clauses:
     |-p                 Pretty-print Horn clauses
-    |-pDot              Pretty-print Horn clauses, output in dot format and display it
+    |-pDot              Pretty-print Horn clauses in dot/png format and display
+    |                     (use -pngNo to suppress the viewer)
     |-sp                Pretty-print the Horn clauses in SMT-LIB format
     |-dumpClauses       Write the Horn clauses in SMT-LIB format to input filename.smt2
     |-dumpSimplified    Write simplified Horn clauses in SMT-LIB format to input filename.smt2
