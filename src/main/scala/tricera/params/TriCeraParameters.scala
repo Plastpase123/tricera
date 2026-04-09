@@ -184,7 +184,7 @@ class TriCeraParameters extends GlobalParameters {
 
     case invEnc :: rest if (invEnc.startsWith("-invEncoding")) =>
       val parts = invEnc.split(":", 2)
-      invEncoding = Some(if (parts.length > 1) parts(1) else "RW")
+      invEncoding = Some(if (parts.length > 1) parts(1) else "default")
       determinizeInput = true
       useArraysForHeap = true
       parseArgs(rest)
@@ -356,7 +356,11 @@ class TriCeraParameters extends GlobalParameters {
     |-v, --version      Print version number
     |-arithMode:t       Integer semantics: math (default), ilp32, lp64, llp64
     |-mathArrays        Use mathematical arrays for modeling program arrays (ignores memsafety properties)
-    |-invEncoding[:t]   Use an invariant-based heap encoding, where t is the encoding type (R, RW (default))
+    |-invEncoding[:t]   Use an invariant-based heap encoding. t is the encoding type:
+    |                     """ .stripMargin +
+    tricera.concurrency.heap.InvariantEncodingParser.availableEncodings.mkString(", ") + """
+    |                   Default: RW-fun-tag-opt-p. Only reachability checking is
+    |                   supported (memory safety properties are not supported).""".stripMargin + """
     |-t:time            Set timeout (in seconds)
     |-cex               Show textual counterexamples
     |-dotCEX            Output counterexample in dot format

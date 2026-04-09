@@ -76,6 +76,28 @@ object Main {
 
     val (propertiesToCheck, propertyToExpected) = collectProperties
 
+    // Resolve default invariant encoding.
+    params.TriCeraParameters.get.invEncoding match {
+      case Some("default") =>
+        params.TriCeraParameters.get.invEncoding = Some("RW-fun-tag-opt-p")
+      case _ => // user-specified encoding or no encoding
+    }
+
+    // Invariant-based heap encoding only supports reachability checking.
+    params.TriCeraParameters.get.invEncoding match {
+      case Some(_) =>
+        val memProps = Set[properties.Property](
+          properties.MemValidTrack, properties.MemValidFree,
+          properties.MemValidDeref, properties.MemValidCleanup
+        ).intersect(propertiesToCheck)
+        if (memProps.nonEmpty)
+          throw new MainException(
+            "Invariant-based heap encoding (currently) does not support memory safety " +
+            "checking. Unsupported properties: " +
+            memProps.mkString(", ") + ".")
+      case None =>
+    }
+
     /**
      * @todo Below implementation can be improved a lot - there is no
      *       need for the reader to parse the input for each property.

@@ -33,6 +33,26 @@ object InvariantEncodingParser {
     implicit val encodingFormat    : YamlFormat[ParsedEncoding] = yamlFormat8(ParsedEncoding)
   }
 
+  /**
+   * Lists available encoding names by reading a generated listing file
+   * from resources. The file is generated at compile time by sbt.
+   */
+  lazy val availableEncodings: Seq[String] = {
+    val listPath = "tricera/heap/encodings/encodings.list"
+    try {
+      val stream = getClass.getClassLoader.getResourceAsStream(listPath)
+      if (stream == null) Seq.empty
+      else {
+        val source = scala.io.Source.fromInputStream(stream)
+        try {
+          source.getLines().filter(_.nonEmpty).toSeq
+        } finally source.close()
+      }
+    } catch {
+      case _ : Throwable => Seq.empty
+    }
+  }
+
   def parse(encodingName : String) : ParsedEncoding = {
     val resourcePath = s"tricera/heap/encodings/$encodingName.yml"
     val inputStream = Option(getClass.getClassLoader.getResourceAsStream(resourcePath))
