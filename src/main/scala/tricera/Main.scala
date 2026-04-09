@@ -1,5 +1,5 @@
 /**
-  * Copyright (c) 2011-2025 Zafer Esen, Hossein Hojjat, Philipp Ruemmer.
+  * Copyright (c) 2011-2026 Zafer Esen, Philipp Ruemmer.
   * All rights reserved.
   *
   * Redistribution and use in source and binary forms, with or without
