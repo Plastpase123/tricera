@@ -607,56 +607,56 @@ class CCReader private (prog              : Program,
       case _ =>
     }
 
-  import ap.theories.{Heap => HeapObj}
+  import ap.theories.{Heap => HeapTheoryObject}
 
   def defObjCtor(objectCtors : scala.Seq[IFunction]) : ITerm = objectCtors.last()
-  val ObjSort = HeapObj.ADTSort(0)
+  val ObjSort = HeapTheoryObject.ADTSort(0)
 
-  val structCtorSignatures : List[(String, HeapObj.CtorSignature)] =
+  private val heapModelType : HeapModel.ModelType.Value =
+    if (TriCeraParameters.get.invEncoding.nonEmpty)
+      HeapModel.ModelType.Invariants
+    else
+      HeapModel.ModelType.TheoryOfHeaps
+
+  val structCtorSignatures : List[(String, HeapTheoryObject.CtorSignature)] =
     (for ((struct, i) <- structInfos zipWithIndex) yield {
       if(struct.fieldInfos isEmpty) warn(
         s"Struct ${struct.name} was declared, but never defined, " +
           "or it has no fields.")
-      val ADTFieldList : scala.Seq[(String, HeapObj.CtorArgSort)] =
+      val ADTFieldList : scala.Seq[(String, HeapTheoryObject.CtorArgSort)] =
         for(FieldInfo(rawFieldName, fieldType, ptrDepth) <-
               struct.fieldInfos) yield
           (CCStruct.rawToFullFieldName(struct.name, rawFieldName),
             if (ptrDepth > 0) {
-              if (TriCeraParameters.get.invEncoding.nonEmpty)
-                HeapObj.OtherSort(Sort.Integer)
-              else
-                HeapObj.AddrSort
+              HeapModel.pointerFieldCtorSort(heapModelType)
             } else { fieldType match {
-              case Left(ind) => HeapObj.ADTSort(ind + 1)
+              case Left(ind) => HeapTheoryObject.ADTSort(ind + 1)
               case Right(typ) =>
                 typ match {
-                  case _ : CCHeapArrayPointer => HeapObj.AddrRangeSort
-                  case _ => HeapObj.OtherSort(typ.toSort)
+                  case _ : CCHeapArrayPointer => HeapTheoryObject.AddrRangeSort
+                  case _ => HeapTheoryObject.OtherSort(typ.toSort)
                 }
             }
             })
-      (struct.name, HeapObj.CtorSignature(ADTFieldList, HeapObj.ADTSort(i+1)))
+      (struct.name, HeapTheoryObject.CtorSignature(ADTFieldList, HeapTheoryObject.ADTSort(i+1)))
     }).toList
 
   // todo: only add types that exist in the program - should also add machine arithmetic types
   val predefSignatures =
-    List(("O_Int", HeapObj.CtorSignature(List(("getInt", HeapObj.OtherSort(CCInt.toSort))), ObjSort)),
-         ("O_UInt", HeapObj.CtorSignature(List(("getUInt", HeapObj.OtherSort(CCUInt.toSort))), ObjSort))) ++
-    (if (TriCeraParameters.get.invEncoding.nonEmpty) Nil else List(
-         ("O_Addr", HeapObj.CtorSignature(List(("getAddr", HeapObj.AddrSort)), ObjSort)),
-         ("O_AddrRange", HeapObj.CtorSignature(List(("getAddrRange", HeapObj.AddrRangeSort)), ObjSort))
-    ))
+    List(("O_Int", HeapTheoryObject.CtorSignature(List(("getInt", HeapTheoryObject.OtherSort(CCInt.toSort))), ObjSort)),
+         ("O_UInt", HeapTheoryObject.CtorSignature(List(("getUInt", HeapTheoryObject.OtherSort(CCUInt.toSort))), ObjSort))) ++
+    HeapModel.addressWrapperSignatures(heapModelType, ObjSort)
 // Make sure that we have one object sort per sort
 private val ctorObjSorts =
   predefSignatures.flatMap(s => s._2.arguments.map(_._2))
 assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
 
 
-  val wrapperSignatures : List[(String, HeapObj.CtorSignature)] =
+  val wrapperSignatures : List[(String, HeapTheoryObject.CtorSignature)] =
     predefSignatures ++
       (for ((name, signature) <- structCtorSignatures) yield {
         ("O_" + name,
-          HeapObj.CtorSignature(List(("get" + name, signature.result)), ObjSort))
+          HeapTheoryObject.CtorSignature(List(("get" + name, signature.result)), ObjSort))
       })
 
   // TODO: use ADT/Heap depending on HeapModel, and move heap theory declaration
@@ -666,13 +666,13 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
       new NativeHeap("Heap", "Addr", "AddrRange", ObjSort,
                      List("HeapObject") ++ structCtorSignatures.unzip._1,
                      wrapperSignatures ++ structCtorSignatures ++
-                     List(("defObj", HeapObj.CtorSignature(List(), ObjSort))),
+                     List(("defObj", HeapTheoryObject.CtorSignature(List(), ObjSort))),
                      defObjCtor)
     case TriCeraParameters.ArrayHeap =>
       new ArrayHeap("Heap", "Addr", "AddrRange", ObjSort,
                     List("HeapObject") ++ structCtorSignatures.unzip._1,
                     wrapperSignatures ++ structCtorSignatures ++
-                    List(("defObj", HeapObj.CtorSignature(List(), ObjSort))),
+                    List(("defObj", HeapTheoryObject.CtorSignature(List(), ObjSort))),
                     defObjCtor)
   }
 
@@ -704,12 +704,7 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
     objectSorts.zip(0 until structCount+structCtorsOffset).toMap
 
   private val heapModelFactory : HeapModelFactory =
-    tricera.params.TriCeraParameters.get.invEncoding match {
-      case Some(_) =>
-        HeapModel.factory(HeapModel.ModelType.Invariants, symexContext, scope)
-      case None =>
-        HeapModel.factory(HeapModel.ModelType.TheoryOfHeaps, symexContext, scope)
-    }
+    HeapModel.factory(heapModelType, symexContext, scope)
 
   for (((ctor, sels), i) <- structCtors zip structSels zipWithIndex) {
     val curStruct = structInfos(i)
@@ -1527,7 +1522,7 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
 
         val (actualLhsVar, initValue, initGuard) =
           varDec.maybeInitializer match {
-            case Some(init : InitExpr) if init.exp_.isInstanceOf[Enondet] => 
+            case Some(init : InitExpr) if init.exp_.isInstanceOf[Enondet] =>
               lhsVar.typ match {
                 case typ : CCHeapArrayPointer =>
                   val resultExpr =
@@ -2587,16 +2582,16 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
               sortGetterMap get s
             override def wrapperSort(wrapper: IFunction): Option[Sort] =
               wrapper match {
-                case w: MonoSortedIFunction => 
+                case w: MonoSortedIFunction =>
                   wrapperSortMap.get(w)
                 case _ => None
               }
             override def getterSort(getter: IFunction): Option[Sort] =
               getter match {
-                case g: MonoSortedIFunction => 
+                case g: MonoSortedIFunction =>
                   getterSortMap.get(g)
                 case _ => None
-              } 
+              }
 
             override def getCtor(s: Sort): Int = sortCtorIdMap(s)
             override def getTypOfPointer(t: CCType): CCType =
@@ -2605,7 +2600,7 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
                 case t => t
               }
             override def isHeapEnabled: Boolean = modelHeap
-            override def getHeap: HeapObj =
+            override def getHeap: HeapTheoryObject =
               if (modelHeap) heap
               else throw new TranslationException("getHeap called with no heap!")
             override def getHeapTerm: ITerm = {
@@ -2623,7 +2618,7 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
               else throw new TranslationException("getOldHeapTerm called with no heap!")
             } // todo: heap term for exit predicate?
 
-            override val getStructMap: Map[IFunction, CCStruct] = 
+            override val getStructMap: Map[IFunction, CCStruct] =
               structDefs.values.map((struct: CCStruct) => (struct.ctor, struct)).toMap
 
             override val annotationBeginSourceInfo : SourceInfo =
@@ -2679,16 +2674,16 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
               sortGetterMap get s
             override def wrapperSort(wrapper: IFunction): Option[Sort] =
               wrapper match {
-                case w: MonoSortedIFunction => 
+                case w: MonoSortedIFunction =>
                   wrapperSortMap.get(w)
                 case _ => None
               }
             override def getterSort(getter: IFunction): Option[Sort] =
               getter match {
-                case g: MonoSortedIFunction => 
+                case g: MonoSortedIFunction =>
                   getterSortMap.get(g)
                 case _ => None
-              } 
+              }
             override def getCtor(s : Sort) : Int = sortCtorIdMap(s)
             override def getTypOfPointer(t : CCType) : CCType =
               t match {
@@ -2696,7 +2691,7 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
                 case _ => t
               }
             override def isHeapEnabled : Boolean = modelHeap
-            override def getHeap : HeapObj =
+            override def getHeap : HeapTheoryObject =
               if (modelHeap) heap else throw NeedsHeapModelException
             override def getHeapTerm : ITerm = {
               if (modelHeap) {

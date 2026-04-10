@@ -237,6 +237,7 @@ abstract sealed class CCType {
    *       In fact this check would be too strong in some cases (e.g., *p = 0),
    *       checking the values is needed to relax this check, which is not
    *       possible to do in this class.
+   * @todo Do we still need this?
    */
   private def castIsAllowed(newType : CCType) : Boolean = {
     val isInvariantEncoding = TriCeraParameters.get.invEncoding.nonEmpty

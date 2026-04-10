@@ -109,6 +109,26 @@ object HeapModel {
       case ModelType.Invariants    => new InvariantEncodingsFactory(context, scope)
     }
 
+  import ap.theories.{Heap => HeapObj}
+
+  /** Sort for pointer fields in the heap ADT. */
+  def pointerFieldCtorSort(mt: ModelType.Value): HeapObj.CtorArgSort =
+    mt match {
+      case ModelType.Invariants    => HeapObj.OtherSort(Sort.Integer)
+      case ModelType.TheoryOfHeaps => HeapObj.AddrSort
+    }
+
+  /** Address wrapper signatures for the heap ADT (empty for invariant encoding). */
+  def addressWrapperSignatures(mt: ModelType.Value, objSort: HeapObj.ADTSort)
+  : List[(String, HeapObj.CtorSignature)] =
+    mt match {
+      case ModelType.Invariants    => Nil
+      case ModelType.TheoryOfHeaps => List(
+        ("O_Addr", HeapObj.CtorSignature(List(("getAddr", HeapObj.AddrSort)), objSort)),
+        ("O_AddrRange", HeapObj.CtorSignature(List(("getAddrRange", HeapObj.AddrRangeSort)), objSort))
+      )
+    }
+
 }
 
 

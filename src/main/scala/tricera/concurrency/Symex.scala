@@ -845,12 +845,7 @@ class Symex private (context        : SymexContext,
       else Some(CCTerm.fromTerm(result.toTerm, call.resultType, call.sourceInfo))
     case call : HeapModel.FunctionCallWithGetter =>
       val callResult = callFunction(call.functionName, call.args, call.sourceInfo)
-      val canAssumeMemorySafety = TriCeraParameters.get.invEncoding match {
-        case Some(enc) => enc contains "-fun-"
-        case None => false
-      }
-      if(canAssumeMemorySafety ||
-         !context.propertiesToCheck.contains(properties.MemValidDeref)) {
+      if(!context.propertiesToCheck.contains(properties.MemValidDeref)) {
         val safetyFormula = context.heap.hasUserHeapCtor(
           callResult.toTerm, context.sortCtorIdMap(call.resultType.toSort))
         addGuard(safetyFormula)
@@ -1385,14 +1380,12 @@ class Symex private (context        : SymexContext,
             case "alloca" | "__builtin_alloca" => ArrayLocation.Stack
           }
 
-          val canAssumeMemorySafety = TriCeraParameters.get.invEncoding match {
-            case Some(enc) => enc contains "-fun-"
-            case None => false
-          }
+          val checkingValidDeref =
+            context.propertiesToCheck.contains(properties.MemValidDeref)
 
           val objectTerm = CCTerm.fromTerm(name match {
                                     case "calloc"                                 => typ.getZeroInit
-                                    case _ if canAssumeMemorySafety               => typ.getZeroInit
+                                    case _ if !checkingValidDeref                 => typ.getZeroInit
                                     case "malloc" | "alloca" | "__builtin_alloca" => typ.getNonDet
                                   }, typ, srcInfo)
 
@@ -1458,14 +1451,12 @@ class Symex private (context        : SymexContext,
           sizeInt match {
             case Some(1) =>
             // use regular heap model, this is not an array
-              val canAssumeMemorySafety = TriCeraParameters.get.invEncoding match {
-                case Some(enc) => enc contains "-fun-"
-                case None => false
-              }
+              val checkingValidDeref2 =
+                context.propertiesToCheck.contains(properties.MemValidDeref)
 
               val objectTerm = CCTerm.fromTerm(name match {
                 case "calloc"                                 => typ.getZeroInit
-                case _ if canAssumeMemorySafety               => typ.getZeroInit
+                case _ if !checkingValidDeref2                => typ.getZeroInit
                 case "malloc" | "alloca" | "__builtin_alloca" => typ.getNonDet
               }, typ, srcInfo)
 
