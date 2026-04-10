@@ -44,8 +44,8 @@ case class CCTerm(t               : ITerm,
   def toFormula : IFormula = originalFormula getOrElse {
     t match {
       case IIntLit(value) => !value.isZero
-      case t if typ.isInstanceOf[CCHeapPointer] && TriCeraParameters.get.invEncoding.isEmpty =>
-        !IExpression.Eq(t, typ.asInstanceOf[CCHeapPointer].heap.nullAddr())
+      case t if typ.isInstanceOf[CCHeapPointer] =>
+        !IExpression.Eq(t, typ.asInstanceOf[CCHeapPointer].nullAddr)
       case t if typ == CCBool => t === ap.theories.ADT.BoolADT.True
       case t => !IExpression.eqZero(t)
     }
@@ -53,30 +53,22 @@ case class CCTerm(t               : ITerm,
   def occurringConstants: Seq[IExpression.ConstantTerm] =
     SymbolCollector constantsSorted t
   def convertToType(newType: CCType): CCTerm = {
-    val isInvEncoding = TriCeraParameters.get.invEncoding.nonEmpty
     (typ, newType) match {
       case (oldType, newType) if (oldType == newType) =>
         this
       case (_: CCArithType, newType: CCArithType) =>
-        newType cast this
-      case (_: CCArithType, newType: CCHeapPointer) if isInvEncoding =>
         newType cast this
       case (_: CCArithType, CCDuration) => {
         if (!CCReader.useTime)
           throw NeedsTimeException
         CCTerm.fromTerm(CCReader.GTU.term * toTerm, CCDuration, srcInfo)
       }
-      // newType is actually heap pointer
-      //case (oldType : CCHeapPointer, newType : CCStackPointer) =>
-      //  newType.typ cast t
-      case (_, CCVoid) => this //
+      case (_, CCVoid) => this
       // todo: do not do anything for casts to void?
-      case (oldType: CCArithType, newType: CCHeapPointer) =>
+      case (_: CCArithType, newType: CCHeapPointer) =>
         toTerm match {
-          case lit: IIntLit if lit.value.intValue == 0 && TriCeraParameters.get.invEncoding.nonEmpty =>
-            CCTerm.fromTerm(IIntLit(0), newType, srcInfo)
           case lit: IIntLit if lit.value.intValue == 0 =>
-            CCTerm.fromTerm(newType.heap.nullAddr(), newType, srcInfo) //newType cast t
+            CCTerm.fromTerm(newType.nullAddr, newType, srcInfo)
           case _ =>
             throw new UnsupportedCastException(
               "pointer arithmetic is not allowed, cannot convert " + this + " to" +

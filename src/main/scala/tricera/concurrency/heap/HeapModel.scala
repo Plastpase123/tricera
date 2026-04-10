@@ -30,6 +30,7 @@
 package tricera.concurrency.heap
 
 import ap.parser._
+import ap.parser.IExpression.Sort
 import ap.types.MonoSortedIFunction
 import tricera.Util.SourceInfo
 import tricera.acsl.ACSLTranslator
@@ -100,13 +101,12 @@ object HeapModel {
   ) extends HeapOperationResult
 
 
-  def factory(mt        : ModelType.Value,
-              context   : SymexContext,
-              scope     : CCScope,
-              inputVars : scala.Seq[CCVar]) : HeapModelFactory =
+  def factory(mt      : ModelType.Value,
+              context : SymexContext,
+              scope   : CCScope) : HeapModelFactory =
     mt match {
       case ModelType.TheoryOfHeaps => new HeapTheoryFactory(context, scope)
-      case ModelType.Invariants    => new InvariantEncodingsFactory(context, scope, inputVars)
+      case ModelType.Invariants    => new InvariantEncodingsFactory(context, scope)
     }
 
 }
@@ -115,20 +115,24 @@ object HeapModel {
 trait HeapModelFactory {
   import HeapModel._
 
+  /** Create pointer/array pointer types matching this model's encoding. */
+  def makePointer(typ: CCType): CCHeapPointer
+  def makeArrayPointer(elementType: CCType,
+                       arrayLocation: ArrayLocation.Value): CCHeapArrayPointer
+
   /** What CCVar declarations this model needs from the caller */
   def requiredVars : scala.Seq[VarSpec]
 
   /** What CCPredicate declarations this model needs from the caller */
-  def requiredPreds : scala.Seq[PredSpec]
+  def requiredPreds(inputVars : scala.Seq[CCVar]) : scala.Seq[PredSpec]
 
   /** Build the concrete model using the resources the caller allocated */
   def apply(resources: Resources): HeapModel
 
-  /** Function definitions provided by the model (name, def) */
-  def getFunctionsToInject : Map[String, Function_def]
-
-  /** Initialization code to be added to the top of the entry method */
-  def getInitCodeToInject: scala.Seq[String]
+  /** Code to inject: function definitions and init code to add to 
+      the top of the entry method */
+  def getCodeToInject(inputVars : scala.Seq[CCVar])
+  : (Map[String, Function_def], scala.Seq[String])
 }
 
 /**
@@ -138,6 +142,19 @@ trait HeapModelFactory {
  */
 trait HeapModel {
   import HeapModel._
+
+  def addressSort         : Sort
+  def addressRangeSort    : Sort
+  def objectSort          : Sort
+  def heapSort            : Sort
+  def nullAddr()          : ITerm
+  def zeroInitAddrRange() : ITerm
+
+  def makePointer(typ : CCType) : CCHeapPointer =
+    CCHeapPointer(addressSort, nullAddr(), typ)
+  def makeArrayPointer(elementType   : CCType,
+                       arrayLocation : ArrayLocation.Value) : CCHeapArrayPointer =
+    CCHeapArrayPointer(addressRangeSort, zeroInitAddrRange(), elementType, arrayLocation)
 
   def read (p : CCTerm, s : scala.Seq[CCTerm], loc : CCTerm) : HeapOperationResult
   def write(p : CCTerm, o : CCTerm, s : scala.Seq[CCTerm], loc : CCTerm) : HeapOperationResult

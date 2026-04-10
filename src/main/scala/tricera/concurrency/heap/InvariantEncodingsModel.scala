@@ -30,7 +30,8 @@
 package tricera.concurrency.heap
 
 import ap.basetypes.IdealInt
-import ap.parser.{IExpression, ITerm}
+import ap.parser.{IExpression, IIntLit, ITerm}
+import IExpression.Sort
 import IExpression.toFunApplier
 import tricera.acsl.ACSLTranslator
 import tricera.concurrency.ccreader.CCExceptions.TranslationException
@@ -48,8 +49,15 @@ import scala.collection.mutable
 
 final class InvariantEncodingsFactory(
   context   : SymexContext,
-  scope     : CCScope,
-  inputVars : Seq[CCVar]) extends HeapModelFactory {
+  scope     : CCScope) extends HeapModelFactory {
+
+  override def makePointer(typ: CCType): CCHeapPointer =
+    CCHeapPointer(Sort.Integer, CCInt.cast(IIntLit(0)), typ)
+  override def makeArrayPointer(elementType: CCType,
+                                arrayLocation: ArrayLocation.Value): CCHeapArrayPointer =
+    throw new TranslationException(
+      "Modelling arrays using the invariant encoding for heaps is not yet " +
+      "supported, please use the theory of heaps or -mathArrays.")
 
   private val encodingName = TriCeraParameters.get.invEncoding.getOrElse(
     throw new IllegalStateException(
@@ -59,7 +67,8 @@ final class InvariantEncodingsFactory(
   private val originalEncoding : ParsedEncoding =
     InvariantEncodingParser.parse(encodingName)
 
-  private val (transformedInitCode, transformedFunctions) = {
+  private def transformEncoding(inputVars : Seq[CCVar])
+  : (Seq[String], Map[String, InvariantEncodingParser.FunctionDef]) = {
     if (inputVars.isEmpty) {
       (originalEncoding.init_code, Map(
         "$read" -> originalEncoding.read_fn,
@@ -145,15 +154,16 @@ final class InvariantEncodingsFactory(
     case None => Seq()
   }
 
-  override def requiredPreds: Seq[PredSpec] = originalEncoding.predicates match {
-    case Some(preds) => preds.map {
-      pred =>
-        val originalArgs = pred.args.map (arg =>
-          new CCVar (arg.name, None, stringToCCType (arg.`type`), AutoStorage))
-        PredSpec (pred.name, inputVars ++ originalArgs)
+  override def requiredPreds(inputVars : Seq[CCVar]): Seq[PredSpec] =
+    originalEncoding.predicates match {
+      case Some(preds) => preds.map {
+        pred =>
+          val originalArgs = pred.args.map (arg =>
+            new CCVar (arg.name, None, stringToCCType (arg.`type`), AutoStorage))
+          PredSpec (pred.name, inputVars ++ originalArgs)
+      }
+      case None => Seq()
     }
-    case None => Seq()
-  }
 
   private def preprocess(code: String): String = {
     val heapObjectReplacement = Matcher.quoteReplacement("$HeapObject")
@@ -163,8 +173,11 @@ final class InvariantEncodingsFactory(
       .replaceAll("\\b(HAVOC_INT|HAVOC_HEAP|HEAP_DEFAULT)\\b", "_")
   }
 
-  override def getFunctionsToInject: Map[String, Function_def] = {
-    transformedFunctions.map { case (name, funcDef) =>
+  override def getCodeToInject(inputVars : Seq[CCVar])
+  : (Map[String, Function_def], Seq[String]) = {
+    val (transformedInitCode, transformedFunctions) = transformEncoding(inputVars)
+
+    val functions = transformedFunctions.map { case (name, funcDef) =>
       val args = funcDef.args.map(a => s"${a.`type`} ${a.name}").mkString(", ")
       val body = if (funcDef.body.trim.isEmpty) ";" else funcDef.body
       val funString = s"${funcDef.return_type} $name($args) { $body }"
@@ -175,10 +188,8 @@ final class InvariantEncodingsFactory(
 
       (name, parsedFunc.function_def_)
     }
-  }
 
-  override def getInitCodeToInject: Seq[String] = {
-    val originalInitCode = {
+    val initCode = {
       val code = transformedInitCode
       if (code.size == 1 && code.head.isEmpty)
         Seq()
@@ -188,7 +199,8 @@ final class InvariantEncodingsFactory(
           preprocess(terminatedStmt)
         }
     }
-    originalInitCode
+
+    (functions, initCode)
   }
 
   override def apply(resources: Resources): HeapModel =
@@ -198,6 +210,22 @@ final class InvariantEncodingsFactory(
 class InvariantEncodingsModel(context  : SymexContext,
                               scope    : CCScope,
                               encoding : ParsedEncoding) extends HeapModel{
+  override def addressSort : Sort = Sort.Integer
+  override def addressRangeSort : Sort =
+    throw new TranslationException(
+      "Modelling arrays using the invariant encoding for heaps is not yet " +
+      "supported, please use the theory of heaps or -mathArrays.")
+  override def objectSort : Sort = context.heap.ObjectSort
+  override def heapSort : Sort =
+    throw new TranslationException(
+      "There is no explicit heap term in the invariant encoding for heaps, " +
+      "please use the theory of heaps.")
+  override def nullAddr() : ITerm = CCInt.cast(IIntLit(0))
+  override def zeroInitAddrRange() : ITerm =
+    throw new TranslationException(
+      "Modelling arrays using the invariant encoding for heaps is not yet " +
+      "supported, please use the theory of heaps or -mathArrays.")
+
   private val readFnName  = "$read"
   private val writeFnName = "$write"
   private val allocFnName = "$alloc"
@@ -229,7 +257,7 @@ class InvariantEncodingsModel(context  : SymexContext,
     FunctionCall(
       functionName = allocFnName,
       args = Seq(o, loc),
-      resultType = CCHeapPointer(context.heap, oType),
+      resultType = makePointer(oType),
       sourceInfo = o.srcInfo
     )
   }

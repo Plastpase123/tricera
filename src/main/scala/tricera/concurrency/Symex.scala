@@ -546,10 +546,7 @@ class Symex private (context        : SymexContext,
           if (value.intValue != 0) {
             throw new TranslationException("Pointer assignment only supports 0 (NULL)")
           } else {
-            val rhsVal : ITerm = if(TriCeraParameters.get.invEncoding.isEmpty)
-                                   context.heap.nullAddr()
-                                 else t
-            CCTerm.fromTerm(rhsVal, CCHeapPointer(context.heap, lhsVal.typ), newValue.srcInfo)
+            CCTerm.fromTerm(heapModel.nullAddr(), heapModel.makePointer(lhsVal.typ), newValue.srcInfo)
           }
         case _ => newValue
       }
@@ -606,7 +603,7 @@ class Symex private (context        : SymexContext,
               if (value.intValue != 0) {
                 throw new TranslationException("Pointer assignment only supports 0 (NULL)")
               } else CCTerm.fromTerm(
-                context.heap.nullAddr(), CCHeapPointer(context.heap, fieldTerm.typ), newValue.srcInfo)
+                heapModel.nullAddr(), heapModel.makePointer(fieldTerm.typ), newValue.srcInfo)
             case _ => newValue2
           }
 
@@ -843,7 +840,9 @@ class Symex private (context        : SymexContext,
       assumptions.foreach(a => addGuard(a.toFormula))
       returnValue
     case call : HeapModel.FunctionCall =>
-      Some(callFunction(call.functionName, call.args, call.sourceInfo))
+      val result = callFunction(call.functionName, call.args, call.sourceInfo)
+      if (call.resultType == CCVoid) Some(result)
+      else Some(CCTerm.fromTerm(result.toTerm, call.resultType, call.sourceInfo))
     case call : HeapModel.FunctionCallWithGetter =>
       val callResult = callFunction(call.functionName, call.args, call.sourceInfo)
       val canAssumeMemorySafety = TriCeraParameters.get.invEncoding match {
@@ -1204,7 +1203,7 @@ class Symex private (context        : SymexContext,
                 case _ =>
                   CCTerm.fromTerm(
                     addrTerm,
-                    CCHeapPointer(context.heap,
+                    heapModel.makePointer(
                                   getValue(addrTerm.asInstanceOf[IConstant].c.name,
                                            evalCtx.enclosingFunctionName).typ), srcInfo)
               }
@@ -1829,20 +1828,14 @@ class Symex private (context        : SymexContext,
           throw new TranslationException("Pointers can only compared with `null` or `0`. " +
                                          getLineString(t2.srcInfo))
         else {
-          val actualT2 = if(TriCeraParameters.get.invEncoding.isEmpty)
-                           context.heap.nullAddr()
-                         else t2.toTerm
-          (t1, CCTerm.fromTerm(actualT2, t1.typ, t1.srcInfo)) // 0 to nullAddr()
+          (t1, CCTerm.fromTerm(heapModel.nullAddr(), t1.typ, t1.srcInfo))
         }
       case (_: CCArithType, _: CCHeapPointer) =>
         if (t1.toTerm != IIntLit(IdealInt(0)))
           throw new TranslationException("Pointers can only compared with `null` or `0`. " +
                                          getLineString(t2.srcInfo))
         else {
-          val actualT1 = if(TriCeraParameters.get.invEncoding.isEmpty)
-                           context.heap.nullAddr()
-                         else t1.toTerm
-          (CCTerm.fromTerm(actualT1, t2.typ, t2.srcInfo), t2) // 0 to nullAddr()
+          (CCTerm.fromTerm(heapModel.nullAddr(), t2.typ, t2.srcInfo), t2)
         }
       case _ => (t1, t2)
     }

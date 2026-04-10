@@ -38,6 +38,7 @@ import ap.theories.bitvectors.ModuloArithmetic._
 import ap.types.{MonoSortedIFunction, SortedConstantTerm}
 import CCExceptions._
 import tricera.Util.{SourceInfo, getLineString, getLineStringShort}
+import tricera.concurrency.heap.HeapModel
 import tricera.params.TriCeraParameters
 
 import scala.collection.mutable.{Stack, HashMap => MHashMap}
@@ -57,13 +58,8 @@ abstract sealed class CCType {
         case CCHeap(heap)                   => heap.HeapSort
         case CCHeapObject(heap)             => heap.ObjectSort
         case CCStackPointer(_, _, _)        => Sort.Integer
-        case CCHeapPointer(_ , _) if TriCeraParameters.get.invEncoding.nonEmpty =>
-                                               Sort.Integer
-        case CCHeapPointer(heap, _)         => heap.AddressSort
-        case CCHeapArrayPointer(_, _, _)
-          if tricera.params.TriCeraParameters.get.invEncoding.nonEmpty
-                                            => Sort.Integer
-        case CCHeapArrayPointer(heap, _, _) => heap.AddressRangeSort
+        case p: CCHeapPointer               => p.addressSort
+        case p: CCHeapArrayPointer          => p.addressRangeSort
         case CCArray(_, _, _, s, _)         => s.sort
         case CCStruct(ctor, _)              => ctor.resSort
         case CCStructField(n, s)            => s(n).ctor.resSort
@@ -84,14 +80,9 @@ abstract sealed class CCType {
         case CCHeap(heap)                   => heap.HeapSort
         case CCHeapObject(heap)             => heap.ObjectSort
         case CCStackPointer(_, _, _)        => Sort.Integer
-        case CCHeapPointer(_ , _) if TriCeraParameters.get.invEncoding.nonEmpty =>
-          Sort.Integer
-        case CCHeapPointer(heap, _)         => heap.AddressSort
+        case p: CCHeapPointer               => p.addressSort
         case CCArray(_, _, _, s, _)         => s.sort
-        case CCHeapArrayPointer(_, _, _)
-          if tricera.params.TriCeraParameters.get.invEncoding.nonEmpty
-                                            => Sort.Integer
-        case CCHeapArrayPointer(heap, _, _) => heap.AddressRangeSort
+        case p: CCHeapArrayPointer          => p.addressRangeSort
         case CCStruct(ctor, _)              => ctor.resSort
         case CCStructField(n, s)            => s(n).ctor.resSort
         case CCIntEnum(_, _)                => Sort.Integer
@@ -111,13 +102,8 @@ abstract sealed class CCType {
         case CCHeap(heap)                   => heap.HeapSort
         case CCHeapObject(heap)             => heap.ObjectSort
         case CCStackPointer(_, _, _)        => Sort.Integer
-        case CCHeapPointer(_ , _) if TriCeraParameters.get.invEncoding.nonEmpty =>
-                                               Sort.Integer
-        case CCHeapPointer(heap, _)         => heap.AddressSort
-        case CCHeapArrayPointer(_, _, _)
-          if tricera.params.TriCeraParameters.get.invEncoding.nonEmpty
-                                            => Sort.Integer
-        case CCHeapArrayPointer(heap, _, _) => heap.AddressRangeSort
+        case p: CCHeapPointer               => p.addressSort
+        case p: CCHeapArrayPointer          => p.addressRangeSort
         case CCArray(_, _, _, s, _)         => s.sort
         case CCStruct(ctor, _)              => ctor.resSort
         case CCStructField(n, s)            => s(n).ctor.resSort
@@ -138,13 +124,8 @@ abstract sealed class CCType {
         case CCHeap(heap)                   => heap.HeapSort
         case CCHeapObject(heap)             => heap.ObjectSort
         case CCStackPointer(_, _, _)        => Sort.Integer
-        case CCHeapPointer(_ , _) if TriCeraParameters.get.invEncoding.nonEmpty =>
-                                               Sort.Integer
-        case CCHeapPointer(heap, _)         => heap.AddressSort
-        case CCHeapArrayPointer(_, _, _)
-          if tricera.params.TriCeraParameters.get.invEncoding.nonEmpty
-                                            => Sort.Integer
-        case CCHeapArrayPointer(heap, _, _) => heap.AddressRangeSort
+        case p: CCHeapPointer               => p.addressSort
+        case p: CCHeapArrayPointer          => p.addressRangeSort
         case CCArray(_, _, _, s, _)         => s.sort
         case CCStruct(ctor, _)              => ctor.resSort
         case CCStructField(n, s)            => s(n).ctor.resSort
@@ -162,7 +143,7 @@ abstract sealed class CCType {
           case CCLong | CCULong | CCLongLong | CCULongLong => 8
           case CCFloat                                     => 4
           case _: CCPointer                                => 8
-          case CCHeapArrayPointer(_, _, _)                 => 8
+          case _: CCHeapArrayPointer                       => 8
           case CCIntEnum(_, _)                             => 4
           case CCArray(elemTyp, _, Some(n), _, _)          => elemTyp.sizeInBytes * n
           case s: CCStruct                                 => s.structSizeInBytes
@@ -178,7 +159,7 @@ abstract sealed class CCType {
           case CCLongLong | CCULongLong           => 8
           case CCFloat                            => 4
           case _: CCPointer                       => 4
-          case CCHeapArrayPointer(_, _, _)        => 4
+          case _: CCHeapArrayPointer              => 4
           case CCIntEnum(_, _)                    => 4
           case CCArray(elemTyp, _, Some(n), _, _) => elemTyp.sizeInBytes * n
           case s: CCStruct                        => s.structSizeInBytes
@@ -194,7 +175,7 @@ abstract sealed class CCType {
           case CCLong | CCULong | CCLongLong | CCULongLong => 8
           case CCFloat                                     => 4
           case _: CCPointer                                => 8
-          case CCHeapArrayPointer(_, _, _)                 => 8
+          case _: CCHeapArrayPointer                       => 8
           case CCIntEnum(_, _)                             => 4
           case CCArray(elemTyp, _, Some(n), _, _)          => elemTyp.sizeInBytes * n
           case s: CCStruct                                 => s.structSizeInBytes
@@ -210,7 +191,7 @@ abstract sealed class CCType {
           case CCLongLong | CCULongLong           => 8
           case CCFloat                            => 4
           case _: CCPointer                       => 8
-          case CCHeapArrayPointer(_, _, _)        => 8
+          case _: CCHeapArrayPointer              => 8
           case CCIntEnum(_, _)                    => 4
           case CCArray(elemTyp, _, Some(n), _, _) => elemTyp.sizeInBytes * n
           case s: CCStruct                        => s.structSizeInBytes
@@ -303,10 +284,8 @@ abstract sealed class CCType {
               case _                            => fieldType.getZeroInit
             }
       structType.ctor(const: _*)
-    case CCHeapPointer(_, _) if TriCeraParameters.get.invEncoding.nonEmpty
-                                        => IIntLit(0)
-    case CCHeapPointer(heap, _)         => heap.nullAddr()
-    case CCHeapArrayPointer(heap, _, _) => heap.nthAddrRange(0, IIntLit(1))
+    case p : CCHeapPointer                => p.nullAddr
+    case p : CCHeapArrayPointer           => p.zeroInitAddrRange
     case CCArray(_, _, _, arrayTheory, _) => arrayTheory.const(0)
     case _                                => IIntLit(0)
   }
@@ -527,14 +506,9 @@ case class CCStruct(ctor : MonoSortedIFunction,
             case CCStructField(name, structs) =>
               structs(name).getInitialized(values)
             case s: CCStruct => s.getInitialized(values)
-            case CCHeapPointer(h, _) =>
-              val nullAddr =
-                if (TriCeraParameters.get.invEncoding.nonEmpty)
-                  IIntLit(0)
-                else
-                  h.nullAddr()
-              if (values.isEmpty) nullAddr else values.pop()
-            case CCHeapArrayPointer(h, _, _) =>
+            case p: CCHeapPointer =>
+              if (values.isEmpty) p.nullAddr else values.pop()
+            case _: CCHeapArrayPointer =>
               throw new TranslationException(
                 "Heap arrays inside structs are" +
                   "not supported.")
@@ -622,7 +596,9 @@ case class CCStackPointer(targetInd:    Int,
 // e.g.: what does &(p->x) return when p is a heap pointer?
 //       needs to be a Heap.Address along with a way to reach the field
 //       maybe another class for this? CCHeapADTFieldPointer...
-case class CCHeapPointer(heap: Heap, typ: CCType) extends CCPointer(typ) {
+/** Do not construct directly, use [[HeapModelFactory.makePointer]] instead. */
+case class CCHeapPointer(addressSort: Sort, nullAddr: ITerm,
+                         typ: CCType) extends CCPointer(typ) {
   override def toString: String = typ.shortName + " pointer to heap"
 }
 
@@ -636,9 +612,11 @@ object ArrayLocation extends Enumeration {
   val Global, Stack, Heap = Value
 }
 import ArrayLocation._
-case class CCHeapArrayPointer(heap:          Heap,
-                              elementType:   CCType,
-                              arrayLocation: ArrayLocation)
+/** Do not construct directly, use [[HeapModelFactory.makeArrayPointer]] instead. */
+case class CCHeapArrayPointer(addressRangeSort: Sort,
+                              zeroInitAddrRange: ITerm,
+                              elementType:       CCType,
+                              arrayLocation:     ArrayLocation)
     extends CCType {
   def shortName = "[]"
 }
