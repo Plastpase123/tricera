@@ -185,6 +185,11 @@ object CCAstExceptionTransformer {
       }
     }
 
+    // TODO: This can be removed if function exception types are collected properly
+    for (funcName <- buffer.keys) {
+      buffer.put(funcName, exceptionTypes)
+    }
+
     ExceptionTypesCollectionResult(buffer.toMap, exceptionTypes)
   }
 
@@ -340,6 +345,11 @@ object CCAstExceptionTransformer {
     )
 
     private val emptyReturnStm = new JumpS(new SjumpFour)
+
+    private def returnStm(e: Exp): Stm = {
+      new JumpS(new SjumpFive(e))
+    }
+
     private val abortCall = new ExprS(new SexprTwo(new Efunk(new Evar("abort"))))
 
     private def globalVarDecl(types: List[Type_specifier], varName: String): Global = {
@@ -639,6 +649,32 @@ object CCAstExceptionTransformer {
       switchExceptionTypeCatch(cases)
     }
 
+    private def exceptionPropagationReturn(funcName: String): Stm = {
+      val retTypeListDeclSpec = funcReturnTypesMap.get(funcName) match {
+        case Some(t) => t
+        case None => throw new ExceptionTransformException("Missing return type for function " + funcName)
+      }
+      
+      var added = false
+      val typeSpecList = listDeclSpecToListOfTypeSpec(retTypeListDeclSpec)
+      if (typeSpecList.size == 1) {
+        typeSpecList(0) match {
+          case t: Tvoid => {
+            return emptyReturnStm
+          }
+          case _ => {}
+        }
+      }
+
+      val listStm = new ListStm
+      val listInitDecl = new ListInit_declarator
+      val varName = "__ret_" + getId().toString()
+      listInitDecl.add(new OnlyDecl(new NoPointer(new Name(varName))))
+      listStm.add(new DecS(new Declarators(retTypeListDeclSpec, listInitDecl, new ListExtra_specifier)))
+      listStm.add(returnStm(new Evar(varName)))
+      return new CompS(new ScompTwo(listStm))
+    }
+
     private def funcCallExceptionCheckIfStm(
       outerFuncName: String,
       entireStm: Stm,
@@ -650,7 +686,6 @@ object CCAstExceptionTransformer {
         case Some(v) => v
         case None => throw new ExceptionTransformException("Missing exceptiontype data for function")
       }
-      val stmList = new ListStm
       val cases = new ListBuffer[(ListBuffer[Type_specifier], Stm)]
 
       // For every possible exception type: Determine the correct catch handler (if there exists one)
@@ -664,7 +699,7 @@ object CCAstExceptionTransformer {
             if (outerFuncName == "main") {
               cases.addOne((exceptionType, abortCall))
             } else {
-              cases.addOne((exceptionType, emptyReturnStm))
+              cases.addOne((exceptionType, exceptionPropagationReturn(outerFuncName)))
             }
           }
         }
@@ -772,7 +807,7 @@ object CCAstExceptionTransformer {
                   if (funcName == "main") {
                     stmList.add(abortCall)
                   } else {
-                    stmList.add(emptyReturnStm)
+                    stmList.add(exceptionPropagationReturn(funcName))
                   }
               }
             }
@@ -1004,7 +1039,6 @@ object CCAstExceptionTransformer {
             stmList.add(newCatchBlock)
           }
         }
-
       }
 
       // Add a label for after the handlers
