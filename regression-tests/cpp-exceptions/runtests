@@ -9,7 +9,8 @@ TESTS="basic-no-exception.cpp \
        overwrite-exception-value.cpp \
        nested-sequential-try-blocks.cpp \
        basic-catch-function-call.cpp \
-       throw-struct.cpp"
+       throw-struct.cpp \
+       exception-function-calls-propagation.cpp"
 
 for name in $TESTS; do
   echo

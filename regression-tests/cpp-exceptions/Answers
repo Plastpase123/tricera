@@ -28,3 +28,6 @@ SAFE
 
 throw-struct.cpp
 SAFE
+
+exception-function-calls-propagation.cpp
+SAFE
