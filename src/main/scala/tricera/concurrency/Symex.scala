@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Zafer Esen, Philipp Ruemmer. All rights reserved.
+ * Copyright (c) 2015-2026 Zafer Esen, Philipp Ruemmer. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -339,6 +339,18 @@ class Symex private (context        : SymexContext,
       case _ : CCHeapArrayPointer => true
       case _                      => false
     }
+  private def isHeapPointer(exp : Exp, enclosingFunction : String) =
+    getVar(asLValue(exp), enclosingFunction).typ match {
+      case _ : CCHeapPointer      => true
+      case _ : CCHeapArrayPointer => true
+      case _                      => false
+    }
+
+  private def isIndirection(exp : Exp) : Boolean =
+    exp match {
+      case exp : Epreop => exp.unary_operator_.isInstanceOf[Indirection]
+      case _ => false
+    }
 
   private def getPointerType(ind : Int) = {
     getValue(ind, false).typ match {
@@ -533,8 +545,9 @@ class Symex private (context        : SymexContext,
         case CCTerm(IIntLit(value), _, _, _) if isHeapPointer(lhsVal) =>
           if (value.intValue != 0) {
             throw new TranslationException("Pointer assignment only supports 0 (NULL)")
-          } else CCTerm.fromTerm(
-            context.heap.nullAddr(), CCHeapPointer(context.heap, lhsVal.typ), newValue.srcInfo)
+          } else {
+            CCTerm.fromTerm(heapModel.nullAddr(), heapModel.makePointer(lhsVal.typ), newValue.srcInfo)
+          }
         case _ => newValue
       }
 
@@ -590,7 +603,7 @@ class Symex private (context        : SymexContext,
               if (value.intValue != 0) {
                 throw new TranslationException("Pointer assignment only supports 0 (NULL)")
               } else CCTerm.fromTerm(
-                context.heap.nullAddr(), CCHeapPointer(context.heap, fieldTerm.typ), newValue.srcInfo)
+                heapModel.nullAddr(), heapModel.makePointer(fieldTerm.typ), newValue.srcInfo)
             case _ => newValue2
           }
 
@@ -827,9 +840,16 @@ class Symex private (context        : SymexContext,
       assumptions.foreach(a => addGuard(a.toFormula))
       returnValue
     case call : HeapModel.FunctionCall =>
-      Some(callFunction(call.functionName, call.args, call.sourceInfo))
+      val result = callFunction(call.functionName, call.args, call.sourceInfo)
+      if (call.resultType == CCVoid) Some(result)
+      else Some(CCTerm.fromTerm(result.toTerm, call.resultType, call.sourceInfo))
     case call : HeapModel.FunctionCallWithGetter =>
       val callResult = callFunction(call.functionName, call.args, call.sourceInfo)
+      if(!context.propertiesToCheck.contains(properties.MemValidDeref)) {
+        val safetyFormula = context.heap.hasUserHeapCtor(
+          callResult.toTerm, context.sortCtorIdMap(call.resultType.toSort))
+        addGuard(safetyFormula)
+      }
       Some(CCTerm.fromTerm(call.getter(callResult.toTerm),
                   call.resultType,
                   call.sourceInfo))
@@ -1178,7 +1198,7 @@ class Symex private (context        : SymexContext,
                 case _ =>
                   CCTerm.fromTerm(
                     addrTerm,
-                    CCHeapPointer(context.heap,
+                    heapModel.makePointer(
                                   getValue(addrTerm.asInstanceOf[IConstant].c.name,
                                            evalCtx.enclosingFunctionName).typ), srcInfo)
               }
@@ -1359,6 +1379,7 @@ class Symex private (context        : SymexContext,
             case "malloc" | "calloc"           => ArrayLocation.Heap
             case "alloca" | "__builtin_alloca" => ArrayLocation.Stack
           }
+
           val objectTerm = CCTerm.fromTerm(name match {
                                     case "calloc"                                 => typ.getZeroInit
                                     case "malloc" | "alloca" | "__builtin_alloca" => typ.getNonDet
@@ -1790,14 +1811,16 @@ class Symex private (context        : SymexContext,
         if (t2.toTerm != IIntLit(IdealInt(0)))
           throw new TranslationException("Pointers can only compared with `null` or `0`. " +
                                          getLineString(t2.srcInfo))
-        else
-          (t1, CCTerm.fromTerm(context.heap.nullAddr(), t1.typ, t1.srcInfo)) // 0 to nullAddr()
+        else {
+          (t1, CCTerm.fromTerm(heapModel.nullAddr(), t1.typ, t1.srcInfo))
+        }
       case (_: CCArithType, _: CCHeapPointer) =>
         if (t1.toTerm != IIntLit(IdealInt(0)))
           throw new TranslationException("Pointers can only compared with `null` or `0`. " +
                                          getLineString(t2.srcInfo))
-        else
-          (CCTerm.fromTerm(context.heap.nullAddr(), t2.typ, t2.srcInfo), t2) // 0 to nullAddr()
+        else {
+          (CCTerm.fromTerm(heapModel.nullAddr(), t2.typ, t2.srcInfo), t2)
+        }
       case _ => (t1, t2)
     }
   }
