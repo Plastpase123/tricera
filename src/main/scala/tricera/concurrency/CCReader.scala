@@ -720,12 +720,12 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
           typ match {
             case t : CCHeapArrayPointer => // replace with initialized heap
               // todo: would fail for arrays of arrays inside structs
-              createHeapArrayPointer(t.elementType, t.arrayLocation)
+              heapModelFactory.makeArrayPointer(t.elementType, t.arrayLocation)
             case _ => typ
           }
       }
       if(fieldInfos(j).ptrDepth > 0)
-        createHeapPointer(actualType)
+        heapModelFactory.makePointer(actualType)
       else actualType})}
     structDefs += ((ctor.name, CCStruct(ctor, fieldsWithType)))
   }
@@ -1358,7 +1358,7 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
                     (ArrayLocation.Stack, Some(a.constant_expression_))
                   case _ => (ArrayLocation.Heap, None)
                 }
-                (createHeapArrayPointer(typeWithPtrs, arrayLocation), initArrayExpr)
+                (heapModelFactory.makeArrayPointer(typeWithPtrs, arrayLocation), initArrayExpr)
               }
               // todo: adjust needsHeap below if an array type does not require heap
               // for instance if we model arrays using the theory of arrays or unroll
@@ -1753,9 +1753,10 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
 
   private def getPtrType (ptr : Pointer, _typ : CCType) : CCType = {
     ptr match {
-      case _   : Point | _ : PointQual => createHeapPointer(_typ) // todo; support pointer qualifiers?
+      case _   : Point | _ : PointQual =>
+        heapModelFactory.makePointer(_typ) // todo; support pointer qualifiers?
       case ptr : PointPoint =>
-        getPtrType(ptr.pointer_, createHeapPointer(_typ))
+        getPtrType(ptr.pointer_, heapModelFactory.makePointer(_typ))
       case _ => throw new TranslationException(
         "Advanced pointer declarations are not yet supported (line " +
           getSourceInfo(ptr).line + ")"
@@ -1818,7 +1819,7 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
                 " are not supported.")
             case _: Incomplete if !TriCeraParameters.parameters.value.useArraysForHeap =>
               if (!modelHeap) throw NeedsHeapModelException
-              createHeapArrayPointer(typ, ArrayLocation.Heap)
+              heapModelFactory.makeArrayPointer(typ, ArrayLocation.Heap)
             case _: Incomplete if TriCeraParameters.parameters.value.useArraysForHeap =>
               CCArray(typ, None, None,
                 ExtArray(scala.Seq(CCInt.toSort), typ.toSort), ArrayLocation.Heap) // todo: only int indexed arrays
@@ -2151,7 +2152,7 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
         getType(listDeclSpecs)
       case None => CCInt
     }
-    if(f.decl.isInstanceOf[BeginPointer]) createHeapPointer(typ) // SSSOWO Still relevant: todo: can be stack pointer too, this needs to be fixed
+    if(f.decl.isInstanceOf[BeginPointer]) heapModelFactory.makePointer(typ) // SSSOWO Still relevant: todo: can be stack pointer too, this needs to be fixed
     else typ
   }
 
@@ -2244,13 +2245,6 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
     scope.LocalVars popFrame
   }
 
-  private def createHeapPointer(objectType : CCType) : CCType =
-    heapModelFactory.makePointer(objectType)
-
-  private def createHeapArrayPointer(elementType:   CCType,
-                                     arrayLocation: ArrayLocation.Value) : CCType =
-    heapModelFactory.makeArrayPointer(elementType, arrayLocation)
-
   private def createHeapPointer(decl : BeginPointer, typ : CCType) : CCType =
     createHeapPointerHelper(decl.pointer_, typ)
 
@@ -2260,9 +2254,9 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
   private def createHeapPointerHelper(decl : Pointer, typ : CCType) : CCType =
     decl match {
       case pp : PointPoint =>
-        createHeapPointer(createHeapPointerHelper(pp.pointer_, typ))
+        heapModelFactory.makePointer(createHeapPointerHelper(pp.pointer_, typ))
       case p : Point       =>
-        createHeapPointer(typ)
+        heapModelFactory.makePointer(typ)
       case _ => throw new TranslationException(
         s"Type qualified pointers are currently not supported: $decl")
     }
@@ -2321,7 +2315,7 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
                   np.direct_declarator_ match {
                     case _ : Incomplete
                       if !TriCeraParameters.parameters.value.useArraysForHeap =>
-                      createHeapArrayPointer(typ, ArrayLocation.Heap)
+                      heapModelFactory.makeArrayPointer(typ, ArrayLocation.Heap)
                     case _ : Incomplete
                       if TriCeraParameters.parameters.value.useArraysForHeap =>
                       CCArray(typ, None, None, ExtArray(

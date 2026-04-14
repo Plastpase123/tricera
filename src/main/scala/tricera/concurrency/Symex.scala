@@ -542,7 +542,7 @@ class Symex private (context        : SymexContext,
         case CCTerm(_, _: CCStackPointer, srcInfo, _) =>
           throw new UnsupportedCFragmentException(
             getLineStringShort(srcInfo) + " Only limited support for stack pointers")
-        case CCTerm(t@IIntLit(value), _, _, _) if isHeapPointer(lhsVal) =>
+        case CCTerm(IIntLit(value), _, _, _) if isHeapPointer(lhsVal) =>
           if (value.intValue != 0) {
             throw new TranslationException("Pointer assignment only supports 0 (NULL)")
           } else {

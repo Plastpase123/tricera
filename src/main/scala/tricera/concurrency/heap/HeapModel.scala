@@ -118,7 +118,8 @@ object HeapModel {
       case ModelType.TheoryOfHeaps => HeapObj.AddrSort
     }
 
-  /** Address wrapper signatures for the heap ADT (empty for invariant encoding). */
+  /** Address wrapper signatures for the heap ADT Empty for invariant encoding because
+   *  its address sort is int, whose wrappers are added by CCReader.. */
   def addressWrapperSignatures(mt: ModelType.Value, objSort: HeapObj.ADTSort)
   : List[(String, HeapObj.CtorSignature)] =
     mt match {
