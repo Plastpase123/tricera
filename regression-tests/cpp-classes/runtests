@@ -1,10 +1,17 @@
 #!/bin/sh
 
-TESTS=""
+TESTS="counter-safe.cpp \
+       counter-unsafe.cpp \
+       mult-classes-safe.cpp \
+       mult-classes-unsafe.cpp \
+       nested-classes-safe.cpp \
+       nested-classes-unsafe.cpp\
+       inline-class-def-safe.cpp\
+       inline-class-def-unsafe.cpp\
+       nested-class-constr.cpp"
 
 for name in $TESTS; do
   echo
   echo $name
-  $TRI_CMD -cex -abstract:off "$@" $name 2>&1 |
-grep -v 'at '
+  "./../../tri" "$@" $name 2>&1 | grep -v 'at '
 done
