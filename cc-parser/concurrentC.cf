@@ -130,7 +130,6 @@ separator nonempty Type_qualifier "";
 Tag.      Struct_or_union_spec ::= Struct_or_union CIdent "{" [Struct_dec] "}" ;
 Unique.   Struct_or_union_spec ::= Struct_or_union "{" [Struct_dec] "}";
 TagType.  Struct_or_union_spec ::= Struct_or_union CIdent ;
---ClassQualTag. Struct_or_union_spec ::= Struct_or_union CIdent "::" CIdent ;
 
 Struct.   Struct_or_union ::= "struct";
 Union.    Struct_or_union ::= "union";
@@ -192,7 +191,7 @@ BeginPointer.   Declarator ::= Pointer Direct_declarator ;
 NoPointer.      Declarator ::= Direct_declarator ;
 
 Name.        Direct_declarator ::= CIdent ;
-ClassQualif. Direct_declarator ::= Direct_declarator "::" Direct_declarator ;
+--ClassQualif. Direct_declarator ::= Direct_declarator "::" Direct_declarator ;
 ParenDecl.   Direct_declarator ::= "(" Declarator ")" ;
 ClassCons.    Direct_declarator ::= Direct_declarator "(" Exp ")" ;
 InitArray.   Direct_declarator ::= Direct_declarator "[" Constant_expression "]" ;
