@@ -296,6 +296,17 @@ object CCAstExceptionTransformer {
       func
     }
 
+    override def visit(func: AnnotatedFunc, arg: FuncExceptionTypeData): AnnotatedFunc = {
+      val blockStm = func.compound_stm_
+      val funcExceptionTypeData = Set[ListBuffer[Type_specifier]]()
+
+      blockStm.accept(this, funcExceptionTypeData)
+      val funcName = func.accept(getName, ())
+      funcExceptionTypesBuffer.put(funcName, funcExceptionTypeData)
+
+      func
+    }
+
     override def visit(throwExp: EthrowOne, arg: FuncExceptionTypeData): EthrowOne = {
       val thrownType = typeOfThrownExp(throwExp.exp_)
       arg.addOne(thrownType)
@@ -313,6 +324,14 @@ object CCAstExceptionTransformer {
 
       func
     }
+
+    override def visit(func: AnnotatedFunc, arg: ListDeclaration_specifier): AnnotatedFunc = {
+      val listDecSpec = func.listdeclaration_specifier_
+      val funcName = func.accept(getName, ())
+      funcTypesBuffer.put(funcName, listDecSpec)
+
+      func
+    }  
   }
 
   private class ExceptionTransformer(
@@ -359,6 +378,16 @@ object CCAstExceptionTransformer {
       }
       val initDecls = new ListInit_declarator
       initDecls.add(new OnlyDecl(new NoPointer(new Name(varName))))
+      new Global(new Declarators(declSpec, initDecls, new ListExtra_specifier))
+    }
+
+    private def globalVarDecl(types: List[Type_specifier], varName: String, e: Exp): Global = {
+      val declSpec = new ListDeclaration_specifier
+      for (type_ <- types) {
+        declSpec.add(new Type(type_))
+      }
+      val initDecls = new ListInit_declarator
+      initDecls.add(new InitDecl(new NoPointer(new Name(varName)), new InitExpr(e)))
       new Global(new Declarators(declSpec, initDecls, new ListExtra_specifier))
     }
 
@@ -426,7 +455,7 @@ object CCAstExceptionTransformer {
       // Global variables for exception information
       extDeclarations.add(
         globalVarDecl(
-          List(new Tint()), exceptionFlagVarName
+          List(new Tint()), exceptionFlagVarName, new Econst(new Eint("0"))
         )
       )
       extDeclarations.add(
@@ -686,6 +715,11 @@ object CCAstExceptionTransformer {
         case Some(v) => v
         case None => throw new ExceptionTransformException("Missing exceptiontype data for function")
       }
+
+      if (funcExceptionTypes.isEmpty) {
+        return new CompS(new ScompOne)
+      }
+
       val cases = new ListBuffer[(ListBuffer[Type_specifier], Stm)]
 
       // For every possible exception type: Determine the correct catch handler (if there exists one)
