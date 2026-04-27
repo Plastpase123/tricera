@@ -1,5 +1,5 @@
 /**
-  * Copyright (c) 2011-2025 Zafer Esen, Hossein Hojjat, Philipp Ruemmer.
+  * Copyright (c) 2011-2026 Zafer Esen, Philipp Ruemmer.
   * All rights reserved.
   *
   * Redistribution and use in source and binary forms, with or without
@@ -31,7 +31,7 @@
 package tricera
 
 import java.io.{FileOutputStream, PrintStream}
-import java.nio.file.{Files, Paths}
+import java.nio.file.{Files, Paths, StandardCopyOption}
 import sys.process._
 import ap.parser.IExpression.{ConstantTerm, Predicate}
 import ap.parser.{IAtom, IConstant, IFormula, VariableSubstVisitor}
@@ -75,6 +75,28 @@ object Main {
     var remainingTimeout : Option[Int] = params.TriCeraParameters.get.timeout
 
     val (propertiesToCheck, propertyToExpected) = collectProperties
+
+    // Resolve default invariant encoding.
+    params.TriCeraParameters.get.invEncoding match {
+      case Some("default") =>
+        params.TriCeraParameters.get.invEncoding = Some("RW-fun-tag-opt-p")
+      case _ => // user-specified encoding or no encoding
+    }
+
+    // Invariant-based heap encoding only supports reachability checking.
+    params.TriCeraParameters.get.invEncoding match {
+      case Some(_) =>
+        val memProps = Set[properties.Property](
+          properties.MemValidTrack, properties.MemValidFree,
+          properties.MemValidDeref, properties.MemValidCleanup
+        ).intersect(propertiesToCheck)
+        if (memProps.nonEmpty)
+          throw new MainException(
+            "Invariant-based heap encoding (currently) does not support memory safety " +
+            "checking. Unsupported properties: " +
+            memProps.mkString(", ") + ".")
+      case None =>
+    }
 
     /**
      * @todo Below implementation can be improved a lot - there is no
@@ -272,8 +294,8 @@ class Main (args: Array[String]) {
 
     // C preprocessor (cpp)
     val cppFileName =
-      if(params.cPreprocessor)
-        CPreprocessor(fileName, includeSystemHeaders = true, params.arithMode)
+      if(params.cPreprocessor || params.cPreprocessorLight)
+        CPreprocessor(fileName, includeSystemHeaders = params.cPreprocessor, params.arithMode)
       else fileName
 
     // TriCera preprocessor (tri-pp)
@@ -295,7 +317,8 @@ class Main (args: Array[String]) {
         preprocessedFile.getAbsolutePath,
         displayWarnings = logPPLevel == 2,
         quiet = logPPLevel == 0,
-        entryFunction = TriCeraParameters.get.funcName)
+        entryFunction = TriCeraParameters.get.funcName,
+        determinize = TriCeraParameters.get.determinizeInput)
       if (logPPLevel > 0) Console.withOut(outStream) {
         println("\n\nEnd of TriCera's preprocessor (tri-pp) warnings and errors")
         println("=" * 80)
@@ -340,6 +363,15 @@ class Main (args: Array[String]) {
       }
     }
     preprocessTimer.stop()
+
+    // build a mapping from preprocessed line numbers to original file line
+    // numbers. tri-pp may shift lines (e.g., when using --make-calls-unique),
+    // so need to adjust reported line numbers to match the original file
+    val ppLineMapping : Util.PPLineMapping =
+      if (noPP || ppFileName == cppFileName)
+        Util.PPLineMapping.identity
+      else
+        Util.PPLineMapping.build(cppFileName, ppFileName)
 
     Console.withOut(outStream){
       println("Checked properties:")
@@ -599,7 +631,25 @@ class Main (args: Array[String]) {
               // todo: print failed assertion for concurrent systems
               violatedRichAssertionClause match {
                 case Some(assertionClause) =>
-                  println("Failed assertion:\n" + assertionClause.toString)
+                  val mappedSrcInfo = assertionClause.property match {
+                    case properties.FunctionPrecondition(funName, _) =>
+                      ppLineMapping(assertionClause.srcInfo)
+                        .orElse(ppLineMapping.findInOriginal(funName))
+                    case properties.FunctionPostcondition(funName, _) =>
+                      ppLineMapping(assertionClause.srcInfo)
+                        .orElse(ppLineMapping.findInOriginal(funName))
+                    case _ =>
+                      ppLineMapping(assertionClause.srcInfo)
+                  }
+                  val srcInfoStr = mappedSrcInfo match {
+                    case Some(SourceInfo(line, col)) =>
+                      s" (line:$line col:$col)"
+                    case None => ""
+                  }
+                  println("Failed assertion:\n" +
+                    assertionClause.clause.toPrologString +
+                    srcInfoStr +
+                    s" (property: ${assertionClause.property})")
                   println
                 case None                  =>
               }
@@ -611,9 +661,10 @@ class Main (args: Array[String]) {
               system.processes.head._2 == ParametricEncoder.Singleton) {
             Util.show(cex._2, "cex",
                       clauseToUnmergedRichClauses.map(c => (c._1 ->
-                                                            c._2.filter(_.srcInfo.nonEmpty).map(_.srcInfo.get))),
+                        c._2.flatMap(rc => ppLineMapping(rc.srcInfo)))),
                       reader.PredPrintContext.predArgNames,
-                      reader.PredPrintContext.predSrcInfo,
+                      (pred : ap.parser.IExpression.Predicate) =>
+                        ppLineMapping(reader.PredPrintContext.predSrcInfo(pred)),
                       reader.PredPrintContext.isUninterpretedPredicate)
           } else {
             println("Cannot display -eogCEX for concurrent processes, try " +

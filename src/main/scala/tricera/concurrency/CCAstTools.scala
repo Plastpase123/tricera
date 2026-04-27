@@ -224,8 +224,7 @@ class CCAstGetNameVistor extends AbstractVisitor[String, Unit] {
     override def visit(exp: Epoint, arg: Unit): String = { exp.cident_ }
 
     /* Class */
-   override def visit(cls: AClass, arg: Unit): String = { cls.cident_ }
-   override def visit(cls: ClassInitFunc, arg: Unit): String = { cls.declarator_.accept(this, arg) }
+   override def visit(cls: ClassConstr, arg: Unit): String = { cls.direct_declarator_.accept(this, arg) }
 
 }
 
@@ -281,8 +280,8 @@ class CCAstGetFunctionDeclarationVistor extends AbstractVisitor[(ListDeclaration
   override def visit(defn: NewFunc, arg: Unit) = {
     (copyAst(defn.listdeclaration_specifier_), new OnlyDecl(defn.declarator_.accept(copyAst, arg)));
   }
-  override def visit(defn: ClassInitFunc, arg: Unit) = {
-    (null, new OnlyDecl(defn.declarator_.accept(copyAst, arg)));
+  override def visit(defn: ClassConstr, arg: Unit) = {
+    (null, new OnlyDecl(new NoPointer(defn.direct_declarator_.accept(copyAst, arg))));
   }
 
 
@@ -340,6 +339,7 @@ class CCAstRemovePointerLevelVistor extends CCAstCopyWithLocation[Unit] {
     }
   }
 }
+
 
 /**
   * Vistor class to rename a declaration or definition.
@@ -438,7 +438,7 @@ class CCAstGetFunctionBodyVistor extends AbstractVisitor[Compound_stm, Unit] {
   override def visit(defn: NewFunc, arg: Unit) = {
     defn.compound_stm_.accept(copyAst, arg)
   }
-  override def visit(defn: ClassInitFunc, arg: Unit) = {
+  override def visit(defn: ClassConstr, arg: Unit) = {
     defn.compound_stm_.accept(copyAst, arg)
   }
 }
@@ -534,5 +534,4 @@ class CCAstFillFuncDef extends AbstractVisitor[Unit, MHashMap[String, Function_d
   override def visit(ext: Global, fdefs: FuncDefs): Unit = { /* Do nothing*/ }
   override def visit(ext: Chan, fdefs: FuncDefs): Unit = { /* Do nothing*/ }
   override def visit(ext: Ignored, fdefs: FuncDefs): Unit = { /* Do nothing */ }
-  override def visit(ext: AClass, fdefs: FuncDefs): Unit = { /* Do nothing */ }
 }

@@ -156,9 +156,15 @@ TagType.  Struct_or_union_spec ::= Struct_or_union CIdent ;
 
 Struct.   Struct_or_union ::= "struct";
 Union.    Struct_or_union ::= "union";
-Class.    Struct_or_union ::= "/*&" "class" "&*/"; -- TODO: Rename "Struct_or_union" to make more descriptive
+Class.   Struct_or_union ::= "class";
 
-Structen. Struct_dec ::= [Spec_qual] [Struct_declarator] ";" ;
+Structen. Struct_dec ::= [Spec_qual] [Struct_declarator] Break ;
+StructenNoDec. Struct_dec ::= [Spec_qual] Break ;
+ClassConstr. Struct_dec ::= Direct_declarator Compound_stm ;
+AccSpec. Struct_dec ::= Class_access_spec ":" Struct_dec ;
+
+Com. Break ::= ";" ;
+NoCom. Break ::= "";
 
 separator Struct_dec "";
 
@@ -170,8 +176,28 @@ separator nonempty Spec_qual "";
 Decl.      Struct_declarator ::= Declarator;
 Field.     Struct_declarator ::= ":" Constant_expression;
 DecField.  Struct_declarator ::= Declarator ":" Constant_expression ;
+ClassInitDecl. Struct_declarator ::= Declarator "=" Initializer ;
+ClassFunc. Struct_declarator ::= Declarator Compound_stm ;
 
 separator nonempty Struct_declarator ",";
+-- CLASSES
+-- AClass. External_declaration ::= "class" CIdent Inherits "{" [Class_member_spec] "}" ";" ;
+
+InheritedClass. Inherits ::= ":" [Inh] ;
+NoInheritance. Inherits ::= "" ;
+
+Inherited. Inh ::= Class_access_spec CIdent ;
+
+separator nonempty Inh "," ;
+
+ClassDec. Class_member_spec ::= External_declaration ;
+ClassAccSpec. Class_member_spec ::= Class_access_spec ":" Class_member_spec ;
+
+separator nonempty Class_member_spec "" ;
+
+CKPublic. Class_access_spec ::= "public" ;
+CKProtected. Class_access_spec ::= "protected" ;
+CKPrivate. Class_access_spec ::= "private" ;
 
 
 EnumDec.   Enum_specifier ::= "enum" "{" [Enumerator] "}" ;
@@ -188,6 +214,7 @@ BeginPointer.   Declarator ::= Pointer Direct_declarator ;
 NoPointer.      Declarator ::= Direct_declarator ;
 
 Name.        Direct_declarator ::= CIdent ;
+--ClassQualif. Direct_declarator ::= Direct_declarator "::" Direct_declarator ;
 ParenDecl.   Direct_declarator ::= "(" Declarator ")" ;
 ClassCons.    Direct_declarator ::= Direct_declarator "(" Exp ")" ;
 InitArray.   Direct_declarator ::= Direct_declarator "[" Constant_expression "]" ;
@@ -306,7 +333,7 @@ SatomicTwo. Atomic_stm ::= "within" "(" Exp ")" Stm;
 
 separator nonempty Stm "";
 
-token CIdent (letter | '_' | '$' | '\\') (letter | digit | '_' | '$')*;
+token CIdent (letter | '_' | '$' | '\\' | ':'':') (letter | digit | '_' | '$' | ':'':')*;
 
 token AnnotationString   {"■■"} (char - ["■"])* {"■■"};
 
