@@ -166,8 +166,8 @@ object CCAstExceptionTransformer {
     val transformer = new ExceptionTransformer(collectionResult, funcReturnTypes)
     val transformedProgram = program.accept(transformer, null);
 
-    println("=== EXCEPTION TRANSFORMED PROGRAM === ")
-    println(printer print transformedProgram)
+    // println("=== EXCEPTION TRANSFORMED PROGRAM === ")
+    // println(printer print transformedProgram)
     return transformedProgram
   }
 
@@ -403,7 +403,7 @@ object CCAstExceptionTransformer {
         val structDeclaratorList = new ListStruct_declarator
         structDeclaratorList.add(new Decl(new NoPointer(new Name(fieldName))))
 
-        structDecs.add(new Structen(specQualList, structDeclaratorList))
+        structDecs.add(new Structen(specQualList, structDeclaratorList, new Com))
       }
 
       declSpecList.add(new Type(new Tstruct(new Tag(new Struct, structName, structDecs))))

@@ -19,28 +19,6 @@ Global. External_declaration ::= Dec ;
 Chan.   External_declaration ::= Chan_def ;
 Ignored.External_declaration ::= IgnoredDecl;
 
--- CLASSES
-AClass. External_declaration ::= "class" CIdent Inherits "{" Class_decs "}" ;
-
-InheritedClass. Inherits ::= ":" [Inh] ;
-NoInheritance. Inherits ::= "" ;
-
-Inherited. Inh ::= Class_access_spec CIdent ;
-
-separator nonempty Inh "," ;
-
-NoClassDec. Class_decs ::= "" ;
-SomeClassDecs. Class_decs ::= [Class_member_spec] ;
-
-ClassDec. Class_member_spec ::= External_declaration ;
-ClassAccSpec. Class_member_spec ::= Class_access_spec ":" Class_member_spec ;
-
-separator nonempty Class_member_spec "" ;
-
-CKPublic. Class_access_spec ::= "public" ;
-CKProtected. Class_access_spec ::= "protected" ;
-CKPrivate. Class_access_spec ::= "private" ;
-
 -- following can be left in source after preprocessing, simply ignore them.
 ExternKeyword. IgnoredDecl ::= "__extension__" ;
 StraySemi.     IgnoredDecl ::= ";" ;
@@ -52,7 +30,6 @@ AnnotatedFunc.  Function_def ::= [Annotation] [Declaration_specifier] Declarator
 -- OldFuncInt.  Function_def ::= Declarator [Dec] Compound_stm ;
 NewFuncInt.  Function_def ::= [Annotation] Declarator Compound_stm ;
 NewFunc.     Function_def ::= [Declaration_specifier] Declarator Compound_stm ;
-ClassInitFunc. Function_def ::= Declarator Compound_stm ;
 
 Annot1. Annotation ::= AnnotationString;
 
@@ -416,8 +393,8 @@ Estring.      Exp17 ::= String;
 Enondet.      Exp17 ::= "_";
 
 -- Throw expression
-EthrowOne.    Exp17 ::= "throw" Exp;
-EthrowTwo.    Exp17 ::= "throw" ;
+EthrowOne.    Exp2 ::= "throw" Exp2;
+EthrowTwo.    Exp2 ::= "throw" ;
 
 
 coercions Exp 17;
