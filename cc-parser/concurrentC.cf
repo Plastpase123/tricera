@@ -137,11 +137,14 @@ Class.   Struct_or_union ::= "class";
 
 Structen. Struct_dec ::= [Spec_qual] [Struct_declarator] Break ;
 StructenNoDec. Struct_dec ::= [Spec_qual] Break ;
-ClassConstr. Struct_dec ::= Direct_declarator Compound_stm ;
+SpecialMemberFunc. Struct_dec ::= Is_dtor Direct_declarator Compound_stm ;
 AccSpec. Struct_dec ::= Class_access_spec ":" Struct_dec ;
 
-Com. Break ::= ";" ;
-NoCom. Break ::= "";
+WithSemi. Break ::= ";" ;
+NoSemi. Break ::= "";
+
+Dtor. Is_dtor ::= "~";
+NotDtor. Is_dtor ::= "";
 
 separator Struct_dec "";
 
@@ -363,7 +366,7 @@ Emod.         Exp13 ::= Exp13 "%" Exp14;
 Etypeconv.    Exp14 ::= "(" Type_name ")" Exp14;
 Epreinc.      Exp15 ::= "++" Exp15;
 Epredec.      Exp15 ::= "--" Exp15;
-ENew.         Exp15 ::= "new" New_type New_initializer;
+ENew.         Exp15 ::= "new" Type_specifier New_initializer;
 EDelete.      Exp15 ::= "delete" Exp15 ;
 EDeleteParen. Exp15 ::= "delete" "(" Exp15 ")" ;
 Epreop.       Exp15 ::= Unary_operator Exp14;
@@ -372,6 +375,9 @@ Ebytestype.   Exp15 ::= "sizeof" "(" Type_name ")";
 Earray.       Exp16 ::= Exp16 "[" Exp "]" ;
 Efunk.        Exp16 ::= Exp16 "(" ")";
 Efunkpar.     Exp16 ::= Exp16 "(" [Exp2] ")";
+ECtor.        Exp16 ::= Type_specifier "(" [Exp2] ")" ;
+ESelDtor.     Exp16 ::= Exp16 "." "~" Type_specifier "(" ")" ;
+EPointDtor.   Exp16 ::= Exp16 "->" "~" Type_specifier "(" ")" ;
 Eselect.      Exp16 ::= Exp16 "." CIdent;
 Epoint.       Exp16 ::= Exp16 "->" CIdent;
 Epostinc.     Exp16 ::= Exp16 "++";
@@ -435,9 +441,6 @@ AssignOr.     Assignment_op ::= "|=" ;
 comment "/*" "*/" ;
 comment "//";
 comment "#";
-
-NoPointNewT.   New_type ::= Type_specifier;
-PointNewT.     New_type ::= New_type Pointer;
 
 NoInit.       New_initializer ::= "" ;
 EmptyInit.    New_initializer ::= "(" ")" ;
