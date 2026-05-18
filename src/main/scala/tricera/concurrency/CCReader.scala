@@ -83,7 +83,8 @@ object CCReader {
 
     def entry(parser : concurrent_c.parser) = parser.pProgram
     val prog = parseWithEntry(programReader, entry _)
-    val classToStructTransProg = CCAstClassTransformer.transform(prog)
+    val newdeleteTransformed = CCAstNewDeleteTransformer.transform(prog)
+    val classToStructTransProg = CCAstClassTransformer.transform(newdeleteTransformed)
     val atCallTransformedProg = CCAstAtExpressionTransformer.transform(classToStructTransProg)
     val typeAnnotProg = CCAstTypeAnnotator(atCallTransformedProg)
     val (transformedCallsProg, callSiteTransforms) =

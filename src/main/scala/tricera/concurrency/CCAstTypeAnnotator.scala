@@ -133,7 +133,7 @@ class CCAstTypeAnnotationVisitor extends CCAstCopyWithLocation[CCAstTypeAnnotati
     val result = thunk
     nameStack.pop()
     result
-  } 
+  }
 
   def withDeclarationSpecifiers[A](decs: ListDeclaration_specifier)(thunk: => A): A = {
     decSpecifiersStack.push(decs)
@@ -316,7 +316,9 @@ class CCAstTypeAnnotationVisitor extends CCAstCopyWithLocation[CCAstTypeAnnotati
         newVar
       case None if ignoreMissingDeclarations =>
         eVar
-      case _ => 
+      case None if name == "this" =>
+        eVar // For classes, can't type annotate prior to class transformations otherwise
+      case _ =>
         throw new TypeAnnotationException(
           f"Undeclared identifier in expression: ${name}, line: ${eVar.line_num} col:${eVar.col_num}")
     }
