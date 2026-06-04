@@ -1,3 +1,31 @@
+/**
+ * Copyright (c) 2026 Linus Hellström. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * * Redistributions of source code must retain the above copyright notice, this
+ *   list of conditions and the following disclaimer.
+ *
+ * * Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * * Neither the name of the authors nor the names of their
+ *   contributors may be used to endorse or promote products derived from
+ *   this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
 package tricera.concurrency
 
 import concurrent_c._
@@ -8,564 +36,521 @@ import scala.collection.mutable.{HashMap => MHashMap, ListBuffer}
 import scala.jdk.CollectionConverters._
 import scala.collection.mutable.Stack
 
-class ClassTransformException(msg : String) extends Exception(msg)
+class ClassTransformException(msg: String) extends Exception(msg)
 
 object CCAstClassTransformer {
 
-  private case class ClassDefInfo(
-    classDecs  : ListBuffer[Struct_dec],
-    classFuncs : ListBuffer[Afunc])
-
-  private case class ClassDefCollectionResult(
-    classDefs : Map[String, ClassDefInfo]
+  case class ClassDefInfo(
+    classDecs:  ListBuffer[Struct_dec],
+    classFuncs: ListBuffer[Afunc]
   )
 
   private val printer = new PrettyPrinterNonStatic()
 
   def transform(program: Program): Program = {
-    //println("=== ORIGINAL PROGRAM === ")
-    //println(printer print program)
+    println("=== ORIGINAL PROGRAM === ")
+    println(printer print program)
 
-    val collectionResult = collectClassDefs(program)
-    if (collectionResult.classDefs.isEmpty)
-      return program
-    val transformer = new ClassTransformer(collectionResult)
-  val p = program.accept(transformer, (null, null))
+    val collector = new ClassDefCollector
+    program.accept(collector, (null, null))
 
-  //println("=== TRANSFORMED PROGRAM === ")
-  //println(printer print p)
-  return p
+    val collectionResult = collector.collectedClassDefs
+    if (collectionResult.isEmpty) return program
+
+    val transformed = program.accept(new ClassTransformer(collectionResult), (null, null))
+
+    println("=== TRANSFORMED PROGRAM === ")
+    println(printer print transformed)
+    transformed
+  }
+}
+
+// When we collect class metadata, we use this visitor to store them with their fully
+// qualified name.
+class RenameClassVisitor extends CCAstCopyWithLocation[MHashMap[String, String]] {
+
+  override def visit(dec: Tag, classMap: MHashMap[String, String]): Struct_or_union_spec =
+    dec.struct_or_union_ match {
+      case _: Class =>
+        val newName      = classMap.getOrElse(dec.cident_, dec.cident_)
+        val listStructDec = new ListStruct_dec
+        dec.liststruct_dec_.forEach(s => listStructDec.add(s.accept(this, classMap)))
+        new Tag(dec.struct_or_union_, newName, listStructDec)
+      case _ => dec
+    }
+
+  override def visit(dec: TagType, classMap: MHashMap[String, String]): Struct_or_union_spec =
+    dec.struct_or_union_ match {
+      case _: Class =>
+        val newName = classMap.getOrElse(dec.cident_, dec.cident_)
+        new TagType(dec.struct_or_union_, newName)
+      case _ => dec
+    }
+}
+
+class IsClassVisitor extends AbstractVisitor[Boolean, Unit] {
+
+  def structDecContainsClass(s: Struct_dec): Boolean = innerStructDec(s) match {
+    case st: Structen      => containsClassType(st.listspec_qual_)
+    case nd: StructenNoDec => containsClassType(nd.listspec_qual_)
+    case _                 => false
   }
 
-  private def collectClassDefs(program : Program) : ClassDefCollectionResult = {
-    val classDefBuffer = new MHashMap[String, ClassDefInfo]
-    val collector = new ClassDefCollector(classDefBuffer)
-    program.accept(collector, (null,null))
-
-    ClassDefCollectionResult(classDefBuffer.toMap)
+  private def innerStructDec(sd: Struct_dec): Struct_dec = sd match {
+    case as: AccSpec => innerStructDec(as.struct_dec_)
+    case other       => other
   }
 
-  private def getStructDec(sd : Struct_dec) : Struct_dec = {
-    sd match {
-      case as : AccSpec => getStructDec(as.struct_dec_)
-      case _ => sd
+  private def containsClassType(specs: java.util.List[_]): Boolean =
+    specs.asScala.exists {
+      case ts: TypeSpec => ts.type_specifier_.accept(this, ())
+      case _            => false
     }
+
+
+  override def visit(s: Tstruct, arg: Unit): Boolean  = s.struct_or_union_spec_.accept(this, ())
+  override def visitDefault(t: Type_specifier, arg: Unit): Boolean = false
+
+  override def visit(s: Tag, arg: Unit): Boolean      = s.struct_or_union_.accept(this, ())
+  override def visit(s: Unique, arg: Unit): Boolean   = s.struct_or_union_.accept(this, ())
+  override def visit(s: TagType, arg: Unit): Boolean  = s.struct_or_union_.accept(this, ())
+  override def visitDefault(s: Struct_or_union_spec, arg: Unit): Boolean = false
+
+  override def visit(s: Class, arg: Unit): Boolean    = true
+  override def visitDefault(s: Struct_or_union, arg: Unit): Boolean = false
+}
+
+class ClassDefCollector extends ComposVisitor[(ListBuffer[Struct_dec], ListBuffer[Afunc])] {
+  import CCAstClassTransformer._
+
+  val collectedClassDefs = new MHashMap[String, ClassDefInfo]
+
+  private val getName      = new CCAstGetNameVistor
+  private val rename       = new CCAstRenameInDeclarationVistor
+  private val isClass      = new IsClassVisitor
+  private val classStack   = new Stack[String]
+  private val classMap     = new MHashMap[String, String]
+
+  private def qualifiedName(name: String): String =
+    (classStack.reverse :+ name).mkString("::")
+
+  private def isFuncOrConsDec(dir: Direct_declarator): Boolean =
+    dir.isInstanceOf[NewFuncDec] || dir.isInstanceOf[OldFuncDec] || dir.isInstanceOf[ClassCons]
+
+  private def isValidStructField(decl: Decl): Boolean = decl.declarator_ match {
+    case p:  BeginPointer => !isFuncOrConsDec(p.direct_declarator_)
+    case np: NoPointer    => !isFuncOrConsDec(np.direct_declarator_)
+    case _                => false // Should never happen
   }
 
-  // Visitor to qualify nested class definitions.
-  // Can be done in tri-pp, but it complains when compiling.
-  private class RenameClassVisitor
-  extends CCAstCopyWithLocation[MHashMap[String,String]] {
-    val classStack = new Stack[String]
-    override def visit(dec : Tag, classMap : MHashMap[String, String]): Struct_or_union_spec = {
-      dec.struct_or_union_ match {
-        case _ : Class =>
-          val listStructDec = new ListStruct_dec
-          val className = dec.cident_
-          val newName = classMap.getOrElse(className, className)
-          dec.liststruct_dec_.forEach(s => listStructDec.add(s.accept(this, classMap)))
-          new Tag(dec.struct_or_union_, newName, listStructDec)
-        case _ => dec
-      }
-    }
-
-    override def visit(dec : TagType, classMap : MHashMap[String, String]): Struct_or_union_spec = {
-      dec.struct_or_union_ match {
-        case _ : Class =>
-          val className = dec.cident_
-          val newName = classMap.getOrElse(className, className)
-          new TagType(dec.struct_or_union_, newName)
-        case _ => dec
-      }
-    }
-  }
-  private class IsClassVisitor() extends AbstractVisitor[Boolean, Unit] {
-
-    def structDecIsClass(s : Struct_dec) : Boolean = {
-      getStructDec(s) match {
-        case structen : Structen =>
-          val types = for (t <- structen.listspec_qual_.asScala if t.isInstanceOf[TypeSpec]) yield t.asInstanceOf[TypeSpec]
-          val structs = for (t <- types if t.type_specifier_.accept(this, ())) yield t
-          if (structs.isEmpty) { false }
-          else { true }
-
-        case noDec : StructenNoDec =>
-          val types = for (t <- noDec.listspec_qual_.asScala if t.isInstanceOf[TypeSpec]) yield t.asInstanceOf[TypeSpec]
-          val structs = for (t <- types if t.type_specifier_.accept(this, ())) yield t
-          if (structs.isEmpty) { false }
-          else { true }
-        case _ => false
-      }
-    }
-
-    override def visit(s : Tstruct, arg : Unit) = { s.struct_or_union_spec_.accept(this, ()) }
-    override def visitDefault(t : Type_specifier, arg : Unit) = { false }
-
-    override def visit(s : Tag, arg : Unit) = { s.struct_or_union_.accept(this, ()) }
-    override def visit(s : Unique, arg : Unit) = { s.struct_or_union_.accept(this, ()) }
-    override def visit(s : TagType, arg : Unit) = { false }
-    override def visitDefault(s : Struct_or_union_spec, arg : Unit) = { false }
-
-    override def visit(s : Class, arg : Unit) = { true }
-    override def visitDefault(s : Struct_or_union, arg : Unit) = { false }
+  // Unwraps access specifiers
+  private def innerStructDec(sd: Struct_dec): Struct_dec = sd match {
+    case as: AccSpec => innerStructDec(as.struct_dec_)
+    case other       => other
   }
 
-  private class ClassDefCollector(
-    val classDefBuffer : MHashMap[String, ClassDefInfo]
-  ) extends ComposVisitor[(ListBuffer[Struct_dec], ListBuffer[Afunc])] {
-    private val getName = new CCAstGetNameVistor
-    private val rename  = new CCAstRenameInDeclarationVistor
-    private val classMap = new MHashMap[String, String]
-    private val renameClass = new RenameClassVisitor
-    private val isClass = new IsClassVisitor
-    private val classStack = new Stack[String]
+  // Creates a class object pointer to the parameters of a member function
+  // off the form `struct className *this`
+  private def structParam(className: String): Parameter_declaration = {
+    val specs = new ListDeclaration_specifier
+    specs.addFirst(new Type(new Tstruct(new TagType(new Struct, className))))
+    new TypeAndParam(specs, new BeginPointer(new Point, new Name("this")))
+  }
 
-    private def qualified(name: String): String =
-      (classStack.reverse :+ name).mkString("::")
+  // Adds a struct parameter to a given list of parameters
+  private def addStructParam(params: Parameter_type, className: String): Parameter_type = params match {
+    case p : AllSpec =>
+      val listParDec = p.listparameter_declaration_
+      val structPar = structParam(className)
+      listParDec.addFirst(structPar)
+      new AllSpec(listParDec)
+    case _ => params // should never happen
+  }
 
-    override def visit(fun : ClassConstr, decls : (ListBuffer[Struct_dec], ListBuffer[Afunc])) : ClassConstr = {
-      fun.direct_declarator_ match {
-        case fd : NewFuncDec =>
-         // Get fully qualified name from classMap for class that is being processed (i.e. top of stack)
-         val addConstr = (_ : Any) => classMap(classStack.head) ++ "::constr"
-          val renamed = fd.direct_declarator_.accept(rename, addConstr(_))
-          val funcDec = new NoPointer(new NewFuncDec(renamed, fd.parameter_type_))
-          val listDeclarationSpecifier = new ListDeclaration_specifier
-          listDeclarationSpecifier.add(new Type(new Tvoid))
-          val newAfunc = new Afunc(new NewFunc(listDeclarationSpecifier, funcDec, fun.compound_stm_))
-          decls._2 += newAfunc
-          fun
-        case fd : OldFuncDec =>
-          val addConstr = (_ : Any) => classMap(classStack.head) ++ "::constr"
-          val renamed = fd.direct_declarator_.accept(rename, addConstr(_))
-          val funcDec = new NoPointer(new OldFuncDec(renamed))
-          val listDeclarationSpecifier = new ListDeclaration_specifier
-          listDeclarationSpecifier.add(new Type(new Tvoid))
-          val newAfunc = new Afunc(new NewFunc(listDeclarationSpecifier, funcDec, fun.compound_stm_))
-          decls._2 += newAfunc
-          fun
-        case _ => fun
-      }
+  // Creates a new function declaration for a member function, with an added struct parameter
+  private def makeNewFuncDec(dd: Direct_declarator, renameArg: String => String, className: String): NewFuncDec = dd match {
+    case fd: NewFuncDec =>
+      new NewFuncDec(fd.direct_declarator_.accept(rename, renameArg), addStructParam(fd.parameter_type_, className))
+    case fd: OldFuncDec =>
+      new NewFuncDec(fd.direct_declarator_.accept(rename, renameArg), addStructParam(new AllSpec(new ListParameter_declaration), className))
+  }
+
+  // Converts member function definitions (Struct_dec) into global ones (Afunc)
+  private def methodAsAfunc(className: String, s: Structen, f: ClassFunc): Afunc = {
+    val listDeclSpecs = new ListDeclaration_specifier
+    s.listspec_qual_.asScala.collect { case qs: QualSpec => new SpecProp(qs.type_qualifier_) }
+      .foreach(listDeclSpecs.add)
+    s.listspec_qual_.asScala.collect { case ts: TypeSpec => new Type(ts.type_specifier_) }
+      .foreach(listDeclSpecs.add)
+
+
+    // We store member functions qualified with fully qualified name of enclosing class
+    val renamedDec = f.declarator_ match {
+      case bp: BeginPointer => new BeginPointer(bp.pointer_, makeNewFuncDec(bp.direct_declarator_, qualifiedName, className))
+      case np: NoPointer    => new NoPointer(makeNewFuncDec(np.direct_declarator_, qualifiedName, className))
+      case _ => f.declarator_
     }
 
+    new Afunc(new NewFunc(listDeclSpecs, renamedDec, f.compound_stm_))
+  }
 
-    def isFuncOrClassConsDec(dir : Direct_declarator): Boolean = {
-      dir.isInstanceOf[NewFuncDec] || dir.isInstanceOf[OldFuncDec] || dir.isInstanceOf[ClassCons]
+  // Visits member function definitions (constructors and destructors) and stores them in the class map.
+  override def visit(fun: SpecialMemberFunc, decls: (ListBuffer[Struct_dec], ListBuffer[Afunc])): SpecialMemberFunc = {
+    val suffix = fun.is_dtor_ match {
+      case _: Dtor => "::dtor"
+      case _       => "::ctor" // TODO: Needs to be changed if we want to support other special member functions
+    }
+    val className = classMap(classStack.head)
+    val qualifiedCurrent: Any => String = _ => classMap(classStack.head) ++ suffix
+    val voidReturn = {
+      val lds = new ListDeclaration_specifier
+      lds.add(new Type(new Tvoid))
+      lds
     }
 
-    def isValidStructField(decl : Decl): Boolean = decl.declarator_ match {
-      case p : BeginPointer => !isFuncOrClassConsDec(p.direct_declarator_)
-      case np : NoPointer => !isFuncOrClassConsDec(np.direct_declarator_)
-      case _ => false // Should never happen
+    val processedFunc = new NoPointer(makeNewFuncDec(fun.direct_declarator_, qualifiedCurrent, className))
+    decls._2 += new Afunc(new NewFunc(voidReturn, processedFunc, fun.compound_stm_))
+
+    fun
+  }
+
+  private def collectClassMetadata(className: String, s: Structen, decls: (ListBuffer[Struct_dec], ListBuffer[Afunc])): Unit = {
+    // If the Struct_dec is a class, we have already visited it, meaning it has been collected.
+    if (isClass.structDecContainsClass(s)) return
+
+    val fields = s.liststruct_declarator_.asScala.collect {
+      case decl: Decl if isValidStructField(decl) => decl
+    }
+    val functions = s.liststruct_declarator_.asScala.collect {
+      case f: ClassFunc => methodAsAfunc(className, s, f)
     }
 
-    def getMethodAsAfunc(className : String, s : Structen, f : ClassFunc): Afunc = {
-      val listDeclarationSpecifier = new ListDeclaration_specifier
-      val types = s.listspec_qual_.asScala.collect{ case ts : TypeSpec => new Type(ts.type_specifier_) }
-      val quals = s.listspec_qual_.asScala.collect{ case qs : QualSpec => new SpecProp(qs.type_qualifier_) }
-
-      quals.foreach(listDeclarationSpecifier.add)
-      types.foreach(listDeclarationSpecifier.add)
-
-      // We store member functions qualified with the fully qualified name of the class
-      val renamedDec = {
-        val qualifyName = (s : String) => classMap(className) ++ "::" ++ s
-        f.declarator_ match {
-          case bp : BeginPointer =>
-            bp.direct_declarator_ match {
-              case fd : NewFuncDec =>
-                val renamed = fd.direct_declarator_.accept(rename, qualifyName)
-                new BeginPointer(bp.pointer_, new NewFuncDec(renamed, fd.parameter_type_))
-              case fd : OldFuncDec =>
-                val renamed = fd.direct_declarator_.accept(rename, qualifyName)
-                new BeginPointer(bp.pointer_, new OldFuncDec(renamed))
-              case _ => f.declarator_
-            }
-          case np : NoPointer =>
-            np.direct_declarator_ match {
-              case fd : NewFuncDec =>
-                val renamed = fd.direct_declarator_.accept(rename, qualifyName)
-                new NoPointer(new NewFuncDec(renamed, fd.parameter_type_))
-              case fd : OldFuncDec =>
-                val renamed = fd.direct_declarator_.accept(rename, qualifyName)
-                new NoPointer(new OldFuncDec(renamed))
-              case _ => f.declarator_
-            }
-        }
-      }
-      new Afunc(new NewFunc(listDeclarationSpecifier, renamedDec, f.compound_stm_))
+    if (fields.nonEmpty) {
+      val listStructDec = new ListStruct_declarator
+      fields.foreach(listStructDec.add)
+      decls._1 += new Structen(s.listspec_qual_, listStructDec, s.break_)
     }
+    functions.foreach(decls._2 += _)
+  }
 
-    def collectClassMetadata(className : String, s : Structen, decls : (ListBuffer[Struct_dec], ListBuffer[Afunc])): Unit = {
-      if (isClass.structDecIsClass(s)) return
-      val fields = s.liststruct_declarator_.asScala.collect {
-        case decl : Decl if isValidStructField(decl) => decl
-      }
-      val functions = s.liststruct_declarator_.asScala.collect {
-        case f : ClassFunc => getMethodAsAfunc(className, s, f)
-      }
-      if (!(fields.isEmpty)) {
-        val listStructDeclarator = new ListStruct_declarator
-        fields.foreach(listStructDeclarator.add)
-        val newStructen = new Structen(s.listspec_qual_, listStructDeclarator, s.break_)
-        decls._1 += newStructen
-      }
-      if (!(functions.isEmpty)) {
-        functions.foreach(f => decls._2 += f)
-      }
-    }
-
-
-    override def visit(c : Tag, arg : (ListBuffer[Struct_dec], ListBuffer[Afunc])) : Tag = c.struct_or_union_ match {
-      case _ : Class =>
+  // Entry point for class collection
+  override def visit(c: Tag, arg: (ListBuffer[Struct_dec], ListBuffer[Afunc])): Tag =
+    c.struct_or_union_ match {
+      case _: Class =>
         val className = c.cident_
-        val qualifiedName = { // If class definition is nested, get correctly qualified name
-          if (classStack.isEmpty) {
-            classMap.clear()
-            className
-          } else qualified(className)
-        }
+        val qualName  = if (classStack.isEmpty) { classMap.clear(); className } else qualifiedName(className) // get fully qualified name if nested
         classStack.push(className)
-        classMap.put(className, qualifiedName)
+        classMap.put(className, qualName)
 
         val decls = (new ListBuffer[Struct_dec], new ListBuffer[Afunc])
-        c.liststruct_dec_.forEach(s => s.accept(this, decls))
+        c.liststruct_dec_.forEach(_.accept(this, decls))
 
+        c.liststruct_dec_.asScala
+          .map(innerStructDec)
+          .collect { case s: Structen => s }
+          .foreach(s => collectClassMetadata(className, s, decls))
 
-        val listStructDec = new ListStruct_dec
-        val structDecs = c.liststruct_dec_.asScala.map(dec => getStructDec(dec))
-        val structens = structDecs.collect { case s : Structen => s }
-        val specialFuncs = structDecs.collect { case constr : ClassConstr => constr }
-        structens.foreach(s => collectClassMetadata(className, s, decls))
-        //specialFuncs.foreach(f => f.accept(this, decls))
-
-        val classDecs = decls._1
-        val classFuncs = decls._2
-        val collectedClassInfo = ClassDefInfo(classDecs, classFuncs)
         classStack.pop()
-        classDefBuffer.put(qualifiedName, collectedClassInfo)
+        collectedClassDefs.put(qualName, ClassDefInfo(decls._1, decls._2))
         c
+
       case _ => c
+    }
+}
+
+class ClassTransformer(
+  val collectedDefs: MHashMap[String, CCAstClassTransformer.ClassDefInfo]
+) extends CCAstCopyWithLocation[Any] {
+
+  private val getDeclarator          = new CCAstGetDeclaratorVistor
+  private val getParameters          = new CCAstGetParametersVistor
+  private val getFunctionDeclaration = new CCAstGetFunctionDeclarationVistor
+  private val copyAst                = new CCAstCopyVisitor
+  private val getFuncBody            = new CCAstGetFunctionBodyVistor
+  private val getName                = new CCAstGetNameVistor
+  private val getType                = new CCAstGetTypeVisitor
+  private val isClass                = new IsClassVisitor
+
+
+  private def globalStruct(className: String, structDecs: ListBuffer[Struct_dec]): External_declaration = {
+    val specs         = new ListDeclaration_specifier
+    val listStructDec = new ListStruct_dec
+    structDecs.foreach(listStructDec.add)
+    specs.add(new Type(new Tstruct(new Tag(new Struct, className, listStructDec))))
+    new Global(new NoDeclarator(specs, new ListExtra_specifier))
+  }
+
+  private def factoryFuncName(className: String): String =
+    "__create_" + className.replace("::", "_")
+
+  // Creates helper function `__create_C` which
+  // declares a temporary object of `struct C` type,
+  // calls the constructor for `C` on it, and returns it.
+  private def factoryFunc(className: String, ctorAfunc: Afunc): Afunc = {
+    val retTypeSpecs = new ListDeclaration_specifier
+    retTypeSpecs.add(new Type(new Tstruct(new TagType(new Struct, className))))
+
+    val ctorParams = ctorAfunc.function_def_
+      .accept(getFunctionDeclaration, ())._2
+      .accept(getDeclarator, ())
+      .accept(getParameters, ())
+
+    // We copy the constructor arguments, but since
+    // factory function does not operate on an object, we remove the
+    // `this` argument
+    val factoryParams = new ListParameter_declaration
+    factoryParams.asScala.addAll(
+      ctorParams
+        .asScala
+        .filter(_.accept(getName, ()) != "this"))
+
+    val objDecStm = {
+      val specs = new ListDeclaration_specifier
+      specs.add(new Type(new Tstruct(new TagType(new Struct, className))))
+      val initDec = new ListInit_declarator
+      initDec.add(new OnlyDecl(new NoPointer(new Name("__obj"))))
+      new DecS(new Declarators(specs, initDec, new ListExtra_specifier))
+    }
+
+    val ctorCallStm = {
+      val args = new ListExp
+      args.add(new Epreop(new Address, new Evar("__obj")))
+      ctorParams.forEach {
+        case tap: TypeAndParam => tap.accept(getName, ()) match {
+          case t if t != "this" => args.add(new Evar(t))
+          case _ => // do nothing
+        }
+        case _                 =>
+      }
+      new ExprS(new SexprTwo(new Efunkpar(new Evar(className + "::ctor"), args)))
+    }
+
+    val bodyStms = new ListStm
+    bodyStms.add(objDecStm)
+    bodyStms.add(ctorCallStm)
+    bodyStms.add(new JumpS(new SjumpFive(new Evar("__obj"))))
+
+    new Afunc(
+      new NewFunc(
+        retTypeSpecs,
+        new NoPointer(
+          new NewFuncDec(
+            new Name(factoryFuncName(className)),
+            new AllSpec(factoryParams))),
+        new ScompTwo(bodyStms)
+    ))
+  }
+
+  override def visit(prog: Progr, arg: Any): Program = {
+    val extDeclarations = new ListExternal_declaration
+
+    // For each collected class:
+    //  1. Create a global struct definition using its collected struct declarations
+    //  2. Add collected member functions
+    //  3. Add factory function using parameters from constructor
+    for (className <- collectedDefs.keys) {
+      val info = collectedDefs(className)
+      extDeclarations.add(globalStruct(className, info.classDecs))
+      info.classFuncs.foreach(f => extDeclarations.addLast(f.accept(this, ())))
+      info.classFuncs
+        .find(_.accept(getName, ()).endsWith("::ctor"))
+        .foreach(ctor => extDeclarations.addLast(factoryFunc(className, ctor).accept(this, ())))
+    }
+
+    // Process existing declarations
+    for (decl <- prog.listexternal_declaration_.asScala) {
+      val result = decl.accept(this, arg)
+
+      // This condition skips declarations that define
+      // classes but do not declare variables, since these must be removed
+      if (result != null) extDeclarations.addLast(result)
+    }
+
+    val newProg = new Progr(extDeclarations)
+    copyLocationInformation(prog, newProg)
+  }
+
+  private def hasClassDef(d: Dec): Boolean = {
+    val specs = d match {
+      case nd:    NoDeclarator => nd.listdeclaration_specifier_
+      case decls: Declarators  => decls.listdeclaration_specifier_
+      case _                   => return false
+    }
+    specs.asScala.exists {
+      case t: Type => t.type_specifier_.accept(isClass, ())
+      case _ => false
     }
   }
 
-
-    private class ClassTransformer(
-      val collectedDefs : ClassDefCollectionResult
-    ) extends CCAstCopyWithLocation[Any] {
-      val getDeclarator = new CCAstGetDeclaratorVistor
-      val getParameters = new CCAstGetParametersVistor
-      val getFunctionDeclaration = new CCAstGetFunctionDeclarationVistor
-      val copyAst = new CCAstCopyVisitor
-      val getFuncBody = new CCAstGetFunctionBodyVistor
-      val getAnnotations = new CCAstGetFunctionAnnotationVisitor
-      val getName = new CCAstGetNameVistor
-      val getType = new CCAstGetTypeVisitor
-      val isClass = new IsClassVisitor
-      val classObjBuffer = new MHashMap[String, String]
-
-
-      // Adds a class object pointer to the parameters of a member function
-      // of the form "className *this"
-      private def createStructParam(className : String) : Parameter_declaration = {
-        val listDeclarationSpecifier = new ListDeclaration_specifier
-        val t = new Type(new Tstruct(new TagType(new Struct, className)))
-        val param = new BeginPointer(new Point, new Name("this"))
-
-        listDeclarationSpecifier.addFirst(t)
-
-        new TypeAndParam(listDeclarationSpecifier, param)
-      }
-
-      // Transforms a member function into a global function definition.
-      private def createClassAfunc(fun : Afunc, className : String) : External_declaration = {
-        val funcDef = fun.function_def_
-        val funcDec = funcDef.accept(getFunctionDeclaration, ())
-
-       val (listDecSpecifier, funcName) = (funcDec._1, fun.accept(getName, ()))
-
-        val initDec = funcDec._2
-        val dec = initDec.accept(getDeclarator, ())
-        val params = dec.accept(getParameters, ())
-        val body = funcDef.accept(getFuncBody, ())
-        val classParam = createStructParam(className)
-        params.addFirst(classParam)
-        new Afunc(new NewFunc(listDecSpecifier, new NoPointer(new NewFuncDec(new Name(funcName), new AllSpec(params))), body))
-
-      }
-
-      private def createGlobalStruct(className : String, structDecs : ListBuffer[Struct_dec]) : External_declaration = {
-        val listDeclarationSpecifier = new ListDeclaration_specifier
-        val listExtraSpecifier = new ListExtra_specifier
-        val listStructDec = new ListStruct_dec
-
-        structDecs.foreach(d => listStructDec.add(d))
-
-        val structType = new Type(new Tstruct(new Tag(new Struct, className, listStructDec)))
-        listDeclarationSpecifier.add(structType)
-
-        new Global(new NoDeclarator(listDeclarationSpecifier, listExtraSpecifier))
-      }
-
-      // Transforms the existing AST nodes and adds member functions as global function definitions
-      override def visit(p : Progr, arg : Any) : Program = {
-        val originalProgDecs = p.listexternal_declaration_
-        val extDeclarations = new ListExternal_declaration
-        val defBuffer = collectedDefs.classDefs
-
-        for (className <- defBuffer.keys) {
-          val c = defBuffer(className)
-          extDeclarations.add(createGlobalStruct(className, c.classDecs))
-          for (fun <- c.classFuncs) {
-            extDeclarations.addLast(createClassAfunc(fun, className).accept(this, ()))
-          }
-        }
-
-        for (x <- originalProgDecs.asScala) {
-          val result = x.accept(this, arg)
-          if (result != null) extDeclarations.addLast(result) // Use something else instead of null if possible
-        }
-        val newProg = new Progr(extDeclarations)
-        copyLocationInformation(p, newProg)
-      }
-
-      // Replaces class keywords with struct
-      override def visit(ctype : Class, arg : Any) : Struct_or_union = {
-        copyLocationInformation(ctype, new Struct)
-      }
-
-      // Checks whether a declaration has a definition
-      private def hasInlineClassDef(d : Dec) : Boolean = {
-        val listDeclarationSpecifier = {
-          d match {
-            case nd : NoDeclarator => nd.listdeclaration_specifier_
-            case decls : Declarators => decls.listdeclaration_specifier_
-            case _ => return false
-          }
-        }
-        listDeclarationSpecifier.asScala.exists {
-          case t : Type => t.type_specifier_ match {
-            case ts : Tstruct => ts.struct_or_union_spec_ match {
-              case tag : Tag => tag.struct_or_union_.isInstanceOf[Class]
-              case _         => false
-            }
-            case _ => false
-          }
-          case _ => false
-        }
-      }
-
-      override def visit(g : Global, arg : Any) : External_declaration = {
-        g.dec_ match {
-          case nd : NoDeclarator if hasInlineClassDef(nd) =>
-            null // Very ugly hack
-
-          case decls : Declarators if hasInlineClassDef(decls) =>
-            val listDeclarationSpecifier = new ListDeclaration_specifier
-            decls.listdeclaration_specifier_.forEach { ds =>
-              ds match {
-                case t : Type => t.type_specifier_ match {
-                  case ts : Tstruct => ts.struct_or_union_spec_ match {
-                    case tag : Tag if tag.struct_or_union_.isInstanceOf[Class] =>
-                      // Replace the inline definition with a TagType forward reference.
-                      listDeclarationSpecifier.add(new Type(new Tstruct(new TagType(new Struct, tag.cident_))))
-                    case _ => listDeclarationSpecifier.add(ds.accept(this, arg))
-                  }
-                  case _ => listDeclarationSpecifier.add(ds.accept(this, arg))
-                }
-                case _ => listDeclarationSpecifier.add(ds.accept(this, arg))
-              }
-            }
-            val listInitDeclarator = new ListInit_declarator
-            decls.listinit_declarator_.forEach(id => listInitDeclarator.add(id.accept(this, arg)))
-            val listExtraSpecifier = new ListExtra_specifier
-            decls.listextra_specifier_.forEach(e => listExtraSpecifier.add(e.accept(this, arg)))
-            copyLocationInformation(g, new Global(new Declarators(listDeclarationSpecifier, listInitDeclarator, listExtraSpecifier)))
-
-          case _ =>
-            copyLocationInformation(g, new Global(g.dec_.accept(this, arg)))
-        }
-      }
-
-
-      override def visit(d : DecS, arg : Any) : DecS = {
-        d.dec_ match {
-          case nd : NoDeclarator if hasInlineClassDef(nd) =>
-            null
-
-          case decls : Declarators if hasInlineClassDef(decls) =>
-            val listDeclarationSpecifier = new ListDeclaration_specifier
-            decls.listdeclaration_specifier_.forEach { ds =>
-              ds match {
-                case t : Type => t.type_specifier_ match {
-                  case ts : Tstruct => ts.struct_or_union_spec_ match {
-                    case tag : Tag if tag.struct_or_union_.isInstanceOf[Class] =>
-                      // Replace inline definition with just a TagType
-                      listDeclarationSpecifier.add(new Type(new Tstruct(new TagType(new Struct, tag.cident_))))
-                    case _ => listDeclarationSpecifier.add(ds.accept(this, arg))
-                  }
-                  case _ => listDeclarationSpecifier.add(ds.accept(this, arg))
-                }
-                case _ => listDeclarationSpecifier.add(ds.accept(this, arg))
-              }
-            }
-            val listInitDeclarator = new ListInit_declarator
-            decls.listinit_declarator_.forEach(id => listInitDeclarator.add(id.accept(this, arg)))
-            val listExtraSpecifier = new ListExtra_specifier
-            decls.listextra_specifier_.forEach(e => listExtraSpecifier.add(e.accept(this, arg)))
-            copyLocationInformation(d, new DecS(new Declarators(listDeclarationSpecifier, listInitDeclarator, listExtraSpecifier)))
-
-          case _ =>
-            copyLocationInformation(d, new DecS(d.dec_.accept(this, arg)))
-        }
-      }
-
-      // Transforms a call to a member function via a pointer from "Exp->funcName(...)" to "funcName(Exp, ...)"
-      private def buildCall(argExp : Exp, pointExp : Epoint, original : Exp, hasParams : Boolean): Exp = {
-        val funcName = pointExp.cident_
-        val param = argExp
-        val params = {
-          if (!hasParams) {
-            new ListExp
-          }
-          else {
-            val orig = original.asInstanceOf[Efunkpar]
-            orig.listexp_
-          }
-        }
-        params.addFirst(param)
-        val newExp = new Efunkpar(new Evar(funcName), params)
-        copyLocationInformation(original, newExp.accept(this, ()))
-      }
-
-      // Transforms a call to a member function via a select from "Exp.funcName(...)" to "funcName(&Exp, ...)"
-      private def buildCall(argExp : Exp, selExp : Eselect, original : Exp, hasParams : Boolean): Exp = {
-        val funcName = selExp.cident_
-        val param = new Epreop(new Address, argExp)
-        val params = {
-          if (!hasParams) {
-            new ListExp
-          }
-          else {
-            val orig = original.asInstanceOf[Efunkpar]
-            val p = new ListExp
-            orig.listexp_.forEach(e => p.add(e.accept(this, ())))
-            p
-          }
-        }
-        params.addFirst(param.accept(this, ()))
-        val newExp = new Efunkpar(new Evar(funcName), params)
-        copyLocationInformation(original, newExp)
-      }
-
-      // Finds calls to member functions of the form "Exp.funcName()" or "Exp->funcName()"
-      // and transforms them as described in buildCall
-      override def visit(exp : Efunk, arg : Any): Exp = {
-        exp.exp_ match {
-          case selExp: Eselect =>
-            selExp.exp_ match {
-              case target: Eselect => buildCall(target, selExp, exp, false)
-              case target: Epoint => buildCall(target, selExp, exp, false)
-              case target: Evar => buildCall(target, selExp, exp, false)
-              case _ => exp
-            }
-          case pointExp: Epoint =>
-            pointExp.exp_ match {
-              case target: Eselect => buildCall(target, pointExp, exp, false)
-              case target: Epoint => buildCall(target, pointExp, exp, false)
-              case target: Evar => buildCall(target, pointExp, exp, false)
-              case _ => exp
-            }
-              case _ => exp
-        }
-      }
-
-      // Finds calls to member functions of the form "Exp.funcName(params)" or "Exp->funcName(params)"
-      // and transforms them as described in buildCall
-      override def visit(exp : Efunkpar, arg : Any): Exp = {
-        val newListExp = new ListExp
-
-        // Process existing parameters
-        for (p <- exp.listexp_.asScala) { newListExp.add(p.accept(this, ())) }
-        val newParams = new Efunkpar(exp.exp_.accept(this, ()), newListExp)
-
-        newParams.exp_ match {
-          case selExp: Eselect =>
-            selExp.exp_ match {
-              case target: Eselect => buildCall(target, selExp, newParams, true)
-              case target: Epoint => buildCall(target, selExp, newParams, true)
-              case target: Evar => buildCall(target, selExp, newParams, true)
-              case _ => newParams
-            }
-          case pointExp: Epoint =>
-            pointExp.exp_ match {
-              case target: Eselect => buildCall(target, pointExp, newParams, true)
-              case target: Epoint => buildCall(target, pointExp, newParams, true)
-              case target: Evar => buildCall(target, pointExp, newParams, true)
-              case _ => newParams
-            }
-              case _ => newParams
-        }
-      }
-
-
-      private def classNameFromDecl(decls : Declarators): String = {
-        val types = new ListBuffer[Type_specifier]
-        decls.listdeclaration_specifier_.forEach(_.accept(getType, types))
-        types.collectFirst {
-          case tstruct : Tstruct =>
-            tstruct.struct_or_union_spec_ match {
-              case tagType : TagType if tagType.struct_or_union_.isInstanceOf[Class] =>
-                tagType.cident_
-              case _ : TagType =>
-                throw new ClassTransformException(s"Call to class constructor has wrong class key")
-              case _ =>
-                throw new ClassTransformException("Call to class constructor must be of type TagType")
-            }
-        }.getOrElse(throw new ClassTransformException("Class constructor isn't declared with a struct type"))
-      }
-
-      private def buildConstructorDec(decls : Declarators, classCons : ClassCons): List[Stm] = {
-        val className = classNameFromDecl(decls)
-        val objName = classCons.accept(getName, ())
-
-        val params = new ListExp
-        params.add(classCons.exp_)
-        params.addFirst(new Epreop(new Address, new Evar(objName)))
-        val funcCall = new ExprS(new SexprTwo(
-          new Efunkpar(new Evar(className ++ "::constr"), params)))
-
-        val listInitDec = new ListInit_declarator
-        listInitDec.add(new OnlyDecl(new NoPointer(new Name(objName))))
-        val newDec = new Declarators(
-          copyAst(decls.listdeclaration_specifier_), listInitDec, new ListExtra_specifier)
-
-        List(new DecS(newDec.accept(this, ())), funcCall)
-      }
-
-      private def expandStmt(stmt : Stm): List[Stm] = stmt match {
-        case decS : DecS => decS.dec_ match {
-          case decls : Declarators =>
-            decls.listinit_declarator_.asScala.toList.flatMap { init =>
-              val dirDec = init.accept(getDeclarator, ()) match {
-                case d : BeginPointer => d.direct_declarator_
-                case d : NoPointer => d.direct_declarator_
-              }
-              dirDec match {
-                case classCons : ClassCons => buildConstructorDec(decls, classCons)
-                case _ => List(stmt.accept(this, ()))
-              }
-            }
-          case _ => List(stmt.accept(this, ()))
-        }
-        case _ => List(stmt.accept(this, ()))
-      }
-
-      override def visit(scomp : ScompTwo, arg : Any): ScompTwo = {
-        val stmts = new ListStm
-        scomp.liststm_.asScala.flatMap(expandStmt).foreach(stmts.add)
-        copyLocationInformation(scomp, new ScompTwo(stmts))
-
-      }
+  private def transformSpecifiers(decls: Declarators, arg: Any):
+    (ListDeclaration_specifier, ListInit_declarator, ListExtra_specifier) = {
+    val specs = new ListDeclaration_specifier
+    decls.listdeclaration_specifier_.forEach {
+      case t: Type if t.type_specifier_.accept(isClass, ()) =>
+        // If type contains class definition, transform it to a struct TagType
+        specs.add(new Type(new Tstruct(new TagType(new Struct, classNameFromTypeSpec(t.type_specifier_)))))
+      case other => specs.add(other.accept(this, arg))
     }
+
+    val initDecs = new ListInit_declarator
+    decls.listinit_declarator_.forEach(id => initDecs.add(id.accept(this, arg)))
+
+    val extraSpecs = new ListExtra_specifier
+    decls.listextra_specifier_.forEach(e => extraSpecs.add(e.accept(this, arg)))
+
+    (specs, initDecs, extraSpecs)
+  }
+
+  // Transforms a declaration of the form `class C {...} obj`
+  // into one of the form `struct C obj`
+  override def visit(g: Global, arg: Any): External_declaration = g.dec_ match {
+    case nd: NoDeclarator if hasClassDef(nd) =>
+      null
+    case decls: Declarators if hasClassDef(decls) =>
+      val (specs, initDecs, extraSpecs) = transformSpecifiers(decls, arg)
+      copyLocationInformation(g, new Global(new Declarators(specs, initDecs, extraSpecs)))
+    case _ =>
+      copyLocationInformation(g, new Global(g.dec_.accept(this, arg)))
+  }
+
+  // Transforms a declaration of the form `class C {...} obj`
+  // into one of the form `struct C obj`
+  override def visit(d: DecS, arg: Any): DecS = d.dec_ match {
+    case nd: NoDeclarator if hasClassDef(nd) =>
+      null
+    case decls: Declarators if hasClassDef(decls) =>
+      val (specs, initDecs, extraSpecs) = transformSpecifiers(decls, arg)
+      copyLocationInformation(d, new DecS(new Declarators(specs, initDecs, extraSpecs)))
+    case _ =>
+      copyLocationInformation(d, new DecS(d.dec_.accept(this, arg)))
+  }
+
+
+  private def buildCallPoint(argExp: Exp, pointExp: Epoint, original: Exp, hasParams: Boolean): Exp = {
+    val params = if (!hasParams) new ListExp else original.asInstanceOf[Efunkpar].listexp_
+    params.addFirst(argExp)
+    val newExp = new Efunkpar(new Evar(pointExp.cident_), params)
+    copyLocationInformation(original, newExp.accept(this, ()))
+  }
+
+  private def buildCallSelect(argExp: Exp, selExp: Eselect, original: Exp, hasParams: Boolean): Exp = {
+    val params = if (!hasParams) new ListExp else {
+      val p = new ListExp
+      original.asInstanceOf[Efunkpar].listexp_.forEach(e => p.add(e.accept(this, ())))
+      p
+    }
+    val thisArg = new Epreop(new Address, argExp)
+    params.addFirst(thisArg.accept(this, ()))
+    val newExp = new Efunkpar(new Evar(selExp.cident_), params)
+    copyLocationInformation(original, newExp)
+  }
+
+  private def transformCallTarget(targetExp: Exp, accessor: Exp, original: Exp, hasParams: Boolean): Option[Exp] = {
+    val validTarget = targetExp.isInstanceOf[Eselect] || targetExp.isInstanceOf[Epoint] ||
+                      targetExp.isInstanceOf[Evar]    || targetExp.isInstanceOf[EvarWithType]
+    if (!validTarget) return None
+    accessor match {
+      case sel:   Eselect => Some(buildCallSelect(targetExp, sel,   original, hasParams))
+      case point: Epoint  => Some(buildCallPoint (targetExp, point, original, hasParams))
+      case _              => None
+    }
+  }
+
+  override def visit(exp: Efunk, arg: Any): Exp = exp.exp_ match {
+    case sel:   Eselect => transformCallTarget(sel.exp_,   sel,   exp, hasParams = false).getOrElse(exp)
+    case point: Epoint  => transformCallTarget(point.exp_, point, exp, hasParams = false).getOrElse(exp)
+    case _              => exp
+  }
+
+  override def visit(exp: Efunkpar, arg: Any): Exp = {
+    val newArgs = new ListExp
+    exp.listexp_.asScala.foreach(p => newArgs.add(p.accept(this, ())))
+    val rebuilt = new Efunkpar(exp.exp_.accept(this, ()), newArgs)
+
+    rebuilt.exp_ match {
+      case sel:   Eselect => transformCallTarget(sel.exp_,   sel,   rebuilt, hasParams = true).getOrElse(rebuilt)
+      case point: Epoint  => transformCallTarget(point.exp_, point, rebuilt, hasParams = true).getOrElse(rebuilt)
+      case _              => rebuilt
+    }
+  }
+
+  private def classNameFromDecl(decls: Declarators): String = {
+    val types = new ListBuffer[Type_specifier]
+    decls.listdeclaration_specifier_.forEach(_.accept(getType, types))
+    types.collectFirst {
+      case ts: Tstruct if ts.accept(isClass, ()) => ts.struct_or_union_spec_ match {
+        case tagType: TagType => tagType.cident_
+        case _ =>
+          throw new ClassTransformException("Call to class constructor must be of type TagType")
+      }
+    }.getOrElse(throw new ClassTransformException("Class constructor isn't declared with a struct type"))
+  }
+
+  private def buildConstructorDec(decls: Declarators, classCons: ClassCons): List[Stm] = {
+    val className   = classNameFromDecl(decls)
+    val objName     = classCons.accept(getName, ())
+    val factoryArgs = new ListExp
+    factoryArgs.add(classCons.exp_)
+    val factoryCall = new Efunkpar(new Evar(factoryFuncName(className)), factoryArgs)
+    val initDecs    = new ListInit_declarator
+    initDecs.add(new InitDecl(new NoPointer(new Name(objName)), new InitExpr(factoryCall)))
+    val newDec = new Declarators(copyAst(decls.listdeclaration_specifier_), initDecs, new ListExtra_specifier)
+    List(new DecS(newDec.accept(this, ())))
+  }
+
+  private def expandStmt(stmt: Stm): List[Stm] = stmt match {
+    case decS: DecS => decS.dec_ match {
+      case decls: Declarators =>
+        decls.listinit_declarator_.asScala.toList.flatMap { init =>
+          val dirDec = init.accept(getDeclarator, ()) match {
+            case d: BeginPointer => d.direct_declarator_
+            case d: NoPointer    => d.direct_declarator_
+          }
+          dirDec match {
+            case cons: ClassCons => buildConstructorDec(decls, cons)
+            case _               => List(stmt.accept(this, ()))
+          }
+        }
+      case _ => List(stmt.accept(this, ()))
+    }
+    case _ => List(stmt.accept(this, ()))
+  }
+
+  override def visit(scomp: ScompTwo, arg: Any): ScompTwo = {
+    val stmts = new ListStm
+    scomp.liststm_.asScala.flatMap(expandStmt).foreach(stmts.add)
+    copyLocationInformation(scomp, new ScompTwo(stmts))
+  }
+
+  private def classNameFromTypeSpec(ts: Type_specifier): String = {
+    ts match {
+      case s: Tstruct if ts.accept(isClass, ()) => s.struct_or_union_spec_ match {
+        case t: TagType => t.cident_
+        case t: Tag => t.cident_
+        case _ => throw new ClassTransformException(s"Unsupported: Cannot retrieve class name for abstract class")
+      }
+      case _ => throw new ClassTransformException(s"Unsupported: Cannot retrieve class name non-class type")
+    }
+  }
+
+  override def visit(ctor: ECtor, arg: Any): Exp = {
+    val className     = classNameFromTypeSpec(ctor.type_specifier_)
+    val transformedArgs = new ListExp
+    ctor.listexp_.forEach(e => transformedArgs.add(e.accept(this, ())))
+    copyLocationInformation(ctor, new Efunkpar(new Evar(factoryFuncName(className)), transformedArgs))
+  }
+
+  override def visit(dtor: ESelDtor, arg: Any): Exp = {
+    val className = classNameFromTypeSpec(dtor.type_specifier_)
+    val params    = new ListExp
+    params.addFirst(new Epreop(new Address, dtor.exp_).accept(this, ()))
+    copyLocationInformation(dtor, new Efunkpar(new Evar(className ++ "::dtor"), params))
+  }
+
+  override def visit(dtor: EPointDtor, arg: Any): Exp = {
+    val className = classNameFromTypeSpec(dtor.type_specifier_)
+    val params    = new ListExp
+    params.addFirst(dtor.exp_.accept(this, ()))
+    copyLocationInformation(dtor, new Efunkpar(new Evar(className ++ "::dtor"), params))
+  }
 }
