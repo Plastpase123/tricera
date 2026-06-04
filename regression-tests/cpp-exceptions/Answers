@@ -31,3 +31,11 @@ SAFE
 
 exception-function-calls-propagation.cpp
 SAFE
+
+div-function-safe.cpp
+Warning: Struct DivByZeroErr was declared, but never defined, or it has no fields.
+SAFE
+
+div-function-unsafe.cpp
+Warning: Struct DivByZeroErr was declared, but never defined, or it has no fields.
+UNSAFE

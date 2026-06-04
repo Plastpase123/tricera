@@ -46,11 +46,11 @@ object CCAstExceptionTransformer {
   private val printer = new PrettyPrinterNonStatic()
   type FuncExceptionTypeData = Set[ListBuffer[Type_specifier]]
 
-  private val exceptionFlagVarName = "__exception_flag";
-  private val exceptionTypeVarName = "__exception_type";
-  private val exceptionValueVarName = "__exception_value";
+  private val exceptionFlagVarName = "__exception_flag"
+  private val exceptionTypeVarName = "__exception_type"
+  private val exceptionValueVarName = "__exception_value"
   private val exceptionValueStructName = "ExceptionValue"
-  private val exceptionTypeEnumName = "ExceptionType";
+  private val exceptionTypeEnumName = "ExceptionType"
 
   private val getName = new CCAstGetNameVistor
   private var counter = 0
@@ -164,41 +164,32 @@ object CCAstExceptionTransformer {
     val collectionResult = collectExceptionTypes(program)
     val funcReturnTypes = collectFuncReturnTypes(program)
     val transformer = new ExceptionTransformer(collectionResult, funcReturnTypes)
-    val transformedProgram = program.accept(transformer, null);
+    val transformedProgram = program.accept(transformer, null)
 
-    println("=== EXCEPTION TRANSFORMED PROGRAM === ")
-    println(printer print transformedProgram)
-    return transformedProgram
+    // println("=== EXCEPTION TRANSFORMED PROGRAM === ")
+    // println(printer print transformedProgram)
+    transformedProgram
   }
 
   private def collectExceptionTypes(program: Program): ExceptionTypesCollectionResult = {
-    val buffer = new MHashMap[String, FuncExceptionTypeData]
-    val collector = new FuncExceptionTypesCollector(buffer)
-    program.accept(collector, null)
+    val funcExceptionTypesMap = new MHashMap[String, FuncExceptionTypeData]
+    program.accept(new FuncExceptionTypesCollector(funcExceptionTypesMap), null)
 
     val exceptionTypes = Set[ListBuffer[Type_specifier]]()
-    program.accept(new CatchExceptionTypesCollector(exceptionTypes), null)
+    program.accept(new ExceptionTypesCollector(exceptionTypes), null)
 
-    for ((_, typeSet) <- buffer) {
-      for (typeSpecList <- typeSet) {
-        exceptionTypes.add(typeSpecList)
-      }
+    // Add all exception types to every function
+    // TODO: This can be removed if function exception types are collected properly.
+    for (funcName <- funcExceptionTypesMap.keys) {
+      funcExceptionTypesMap.put(funcName, exceptionTypes)
     }
 
-    // TODO: This can be removed if function exception types are collected properly
-    for (funcName <- buffer.keys) {
-      buffer.put(funcName, exceptionTypes)
-    }
-
-    ExceptionTypesCollectionResult(buffer.toMap, exceptionTypes)
+    ExceptionTypesCollectionResult(funcExceptionTypesMap.toMap, exceptionTypes)
   }
 
   private def collectFuncReturnTypes(program: Program): MHashMap[String, ListDeclaration_specifier] = {
     val buffer = new MHashMap[String, ListDeclaration_specifier]
-    val collector = new FuncReturnTypesCollector(buffer)
-    program.accept(collector, null)
     program.accept(new FuncReturnTypesCollector(buffer), null)
-
     buffer
   }
 
@@ -240,9 +231,15 @@ object CCAstExceptionTransformer {
     types
   }
 
-  private class CatchExceptionTypesCollector(
+  private class ExceptionTypesCollector(
     val exceptionTypesBuffer: Set[ListBuffer[Type_specifier]]
   ) extends ComposVisitor[Any] {
+    override def visit(throwExp: EthrowOne, arg: Any): EthrowOne = {
+      val thrownType = typeOfThrownExp(throwExp.exp_)
+      exceptionTypesBuffer.add(thrownType)
+      throwExp
+    }
+
     override def visit(catchStm: Scatch, arg: Any): Catch_stm = {
       val paramDecl = catchStm.parameter_declaration_
       val block = catchStm.compound_stm_
@@ -279,12 +276,14 @@ object CCAstExceptionTransformer {
     }
   }
 
+  /**
+   * Naive approach to collecting exception types for functions 
+   * that may throw. Only considers throw statements in function
+   * definitions and not function calls.
+   */
   private class FuncExceptionTypesCollector(
     val funcExceptionTypesBuffer: MHashMap[String, FuncExceptionTypeData]
   ) extends ComposVisitor[FuncExceptionTypeData] {
-
-    // TODO: Handle function calls
-
     override def visit(func: NewFunc, arg: FuncExceptionTypeData): NewFunc = {
       val blockStm = func.compound_stm_
       val funcExceptionTypeData = Set[ListBuffer[Type_specifier]]()
@@ -420,7 +419,10 @@ object CCAstExceptionTransformer {
       new Global(new NoDeclarator(declSpecList, new ListExtra_specifier))
     }
 
-    override def visit(p: Progr, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])): Program = {
+    override def visit(
+      p: Progr,
+      arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])
+    ): Program = {
       val originalProgDecls = p.listexternal_declaration_
       val extDeclarations = new ListExternal_declaration
       val otherDeclarations = new ListExternal_declaration
@@ -535,7 +537,10 @@ object CCAstExceptionTransformer {
       )
     }
 
-    override def visit(funcDef: Afunc, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])): External_declaration = {
+    override def visit(
+      funcDef: Afunc,
+      arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])
+    ): External_declaration = {
       val funcName = funcDef.accept(getName, ())
       copyLocationInformation(
         funcDef,
@@ -654,7 +659,10 @@ object CCAstExceptionTransformer {
         None
     }
 
-    private def switchForRethrow(outerFuncName: String, catchStack: Stack[ListBuffer[(Parameter_declaration, Int)]]): Selection_stm = {
+    private def switchForRethrow(
+      outerFuncName: String,
+      catchStack: Stack[ListBuffer[(Parameter_declaration, Int)]]
+    ): Selection_stm = {
       val stmList = new ListStm
       val cases = new ListBuffer[(ListBuffer[Type_specifier], Stm)]
 
@@ -891,7 +899,10 @@ object CCAstExceptionTransformer {
       copyLocationInformation(expStm, newStm)
     }
 
-    override def visit(tryCatchStm: TryCatchS, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])): Stm = {
+    override def visit(
+      tryCatchStm: TryCatchS,
+      arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])
+    ): Stm = {
       val (funcName, catchStack, optCatchDecl) = arg
       val stmList = new ListStm
       val catchTypes = new ListBuffer[(Parameter_declaration, Int)]
@@ -1005,7 +1016,10 @@ object CCAstExceptionTransformer {
       copyLocationInformation(tryCatchStm, new CompS(new ScompTwo(stmList)))
     }
 
-    override def visit(compStm: ScompTwo, arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])): ScompTwo = {
+    override def visit(
+      compStm: ScompTwo,
+      arg: (String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])
+    ): ScompTwo = {
       val stms = new ListStm
 
       for (stm <- compStm.liststm_.asScala) {

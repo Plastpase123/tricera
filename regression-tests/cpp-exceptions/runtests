@@ -10,7 +10,9 @@ TESTS="basic-no-exception.cpp \
        nested-sequential-try-blocks.cpp \
        basic-catch-function-call.cpp \
        throw-struct.cpp \
-       exception-function-calls-propagation.cpp"
+       exception-function-calls-propagation.cpp \
+       div-function-safe.cpp \
+       div-function-unsafe.cpp"
 
 for name in $TESTS; do
   echo
