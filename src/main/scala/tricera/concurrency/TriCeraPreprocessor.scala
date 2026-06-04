@@ -50,10 +50,11 @@ class TriCeraPreprocessor(val inputFilePath   : String,
         "variable TRI_PP_PATH is exported and points to the preprocessor's" +
         " base directory")
   }
+  private val langFlag = if (inputFilePath.endsWith(".cpp")) "-xc++" else "-xc"
   private val cmdLine : scala.Seq[String] =
     (scala.Seq(ppPath.toString, inputFilePath,"-o", outputFilePath) ++
     (if(quiet) scala.Seq("-q") else Nil) ++
-    scala.Seq("-m", entryFunction, "--", "-xc") ++
+    scala.Seq("-m", entryFunction, "--", langFlag) ++
     (if(displayWarnings) Nil else scala.Seq("-Wno-everything")))
   private val returnCode =
     try { Process(cmdLine) ! }
