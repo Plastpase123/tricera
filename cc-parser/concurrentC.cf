@@ -366,8 +366,8 @@ Estring.      Exp17 ::= String;
 Enondet.      Exp17 ::= "_";
 
 -- Throw expression
-EthrowOne.    Exp17 ::= "throw" Exp;
-EthrowTwo.    Exp17 ::= "throw" ;
+EthrowOne.    Exp2 ::= "throw" Exp2;
+EthrowTwo.    Exp2 ::= "throw" ;
 
 
 coercions Exp 17;
