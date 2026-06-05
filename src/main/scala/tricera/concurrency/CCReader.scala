@@ -84,10 +84,11 @@ object CCReader {
     def entry(parser : concurrent_c.parser) = parser.pProgram
     val prog = parseWithEntry(programReader, entry _)
     val atCallTransformedProg = CCAstAtExpressionTransformer.transform(prog)
-    val typeAnnotProg = CCAstTypeAnnotator(atCallTransformedProg)
+    val classTransformedProg = CCAstClassTransformer.transform(atCallTransformedProg)
+    val typeAnnotProg = CCAstTypeAnnotator(classTransformedProg)
     val (transformedCallsProg, callSiteTransforms) =
       CCAstStackPtrArgToGlobalTransformer(typeAnnotProg, entryFunction)
-  
+
     var reader : CCReader = null
     while (reader == null)
       try {
@@ -2700,8 +2701,8 @@ assert(ctorObjSorts.toSet.size == ctorObjSorts.size)
 
             override def getOldHeapTerm : ITerm =
               getHeapTerm // todo: heap term for exit predicate?
-            
-            override val getStructMap: Map[IFunction, CCStruct] = 
+
+            override val getStructMap: Map[IFunction, CCStruct] =
               structDefs.values.map((struct: CCStruct) => (struct.ctor, struct)).toMap
 
             override val annotationBeginSourceInfo : SourceInfo =
