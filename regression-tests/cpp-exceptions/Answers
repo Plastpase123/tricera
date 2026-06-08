@@ -39,3 +39,9 @@ SAFE
 div-function-unsafe.cpp
 Warning: Struct DivByZeroErr was declared, but never defined, or it has no fields.
 UNSAFE
+
+rethrow-safe.cpp
+SAFE
+
+rethrow-unsafe.cpp
+UNSAFE

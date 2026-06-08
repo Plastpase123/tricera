@@ -12,7 +12,9 @@ TESTS="basic-no-exception.cpp \
        throw-struct.cpp \
        exception-function-calls-propagation.cpp \
        div-function-safe.cpp \
-       div-function-unsafe.cpp"
+       div-function-unsafe.cpp
+       rethrow-safe.cpp \
+       rethrow-unsafe.cpp"
 
 for name in $TESTS; do
   echo
