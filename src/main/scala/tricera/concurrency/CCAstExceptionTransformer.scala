@@ -30,7 +30,6 @@
 package tricera.concurrency
 
 import concurrent_c._
-import concurrent_c.PrettyPrinterNonStatic
 import concurrent_c.Absyn._
 
 import scala.collection.mutable.{HashMap => MHashMap, ListBuffer}
@@ -41,7 +40,6 @@ import scala.jdk.CollectionConverters._
 class ExceptionTransformException(msg : String) extends Exception(msg)
 
 object CCAstExceptionTransformer {
-  private val printer = new PrettyPrinterNonStatic()
   type FuncExceptionTypeData = Set[ListBuffer[Type_specifier]]
 
   private val exceptionFlagVarName = "__exception_flag"
@@ -159,9 +157,6 @@ object CCAstExceptionTransformer {
     val funcReturnTypes = collectFuncReturnTypes(program)
     val transformer = new ExceptionTransformer(collectionResult, funcReturnTypes)
     val transformedProgram = program.accept(transformer, null)
-
-    // println("=== EXCEPTION TRANSFORMED PROGRAM === ")
-    // println(printer print transformedProgram)
     transformedProgram
   }
 

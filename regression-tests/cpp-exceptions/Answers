@@ -11,8 +11,17 @@ SAFE
 basic-uncaught-exception.cpp
 UNSAFE
 
-nested-exception-propagation.cpp
+nested-exception-throwing-safe.cpp
 SAFE
+
+nested-exception-throwing-unsafe.cpp
+UNSAFE
+
+nested-exception-rethrowing-safe.cpp
+SAFE
+
+nested-exception-rethrowing-unsafe.cpp
+UNSAFE
 
 nested-correct-catch.cpp
 SAFE
