@@ -106,7 +106,7 @@ class CCAstTypeAnnotationData {
   Visitor to create a copy of an AST with EvarWithType nodes substituted for
   Evar nodes.
 */
-class CCAstTypeAnnotationVisitor extends CCAstCopyWithLocation[CCAstTypeAnnotationData] {
+class CCAstTypeAnnotationVisitor extends ComposVisitor[CCAstTypeAnnotationData] {
   val getName = new CCAstGetNameVistor
   val copyAst = new CCAstCopyVisitor
   val getDeclaration = new CCAstGetFunctionDeclarationVistor

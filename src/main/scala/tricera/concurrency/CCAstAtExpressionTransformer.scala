@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Zafer Esen. All rights reserved.
+ * Copyright (c) 2025-2026 Zafer Esen. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -220,7 +220,7 @@ object CCAstAtExpressionTransformer {
     replacements : Map[Efunkpar, Evar],
     insertions   : Map[SlabelOne, scala.Seq[Stm]],
     collection   : AtCallCollectionResult
-  ) extends CCAstCopyWithLocation[Function_def] {
+  ) extends ComposVisitor[Function_def] with CopyAstLocation {
 
     /**
      * Replaces an `at(...)` call with its corresponding ghost variable.
