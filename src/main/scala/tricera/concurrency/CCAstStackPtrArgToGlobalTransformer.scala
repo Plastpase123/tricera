@@ -66,37 +66,6 @@ private object CCAstUtils {
 }
 
 /**
-  * Vistor to test if an expression is a pointer to stack allocated data.
-  * 
-  * NOTE: This visitor requires a type annotated AST as produced by
-  *   the CCAstTypeAnnotationVistor.
-  * 
-  * NOTE: This is very simplistic in it's interpretation of
-  *   what is considered a stack pointer. However, something
-  *   more refined will require more elaborate data flow
-  *   analysis.
-  */
-class CCAstIsStackPointerVisitor extends AbstractVisitor[Boolean, Unit] {
-  /* Init_declarator */
-  override def visit(dec: InitDecl, arg: Unit) = { dec.initializer_.accept(this, ()) }
-  override def visit(dec: HintInitDecl, arg: Unit) = { dec.initializer_.accept(this, ()) }
-  override def visitDefault(dec: Init_declarator, arg: Unit) = { false }
-
-  /* Initializer */
-  override def visit(init: InitExpr, arg: Unit) = { init.exp_.accept(this, ()) }
-  override def visitDefault(init: Initializer, arg: Unit) = { false }
-
-  /* Exp */
-  override def visit(exp: Epreop, arg: Unit) = { exp.unary_operator_.accept(this, ()) }
-  override def visit(exp: EvarWithType, arg: Unit) = { exp.init_declarator_.accept(this, ()) }
-  override def visitDefault(exp: Exp, arg: Unit) = { false }
-
-  /* Unary opperator */
-  override def visit(op: Address, arg: Unit) = { true }
-  override def visitDefault(op: Unary_operator, arg: Unit) = { false }
-}
-
-/** 
   * Vistor to replace given pointers with global variables.
   */
 class CCAstPointerToGlobalVisitor extends ComposVisitor[Map[String, CCAstDeclaration]] {
