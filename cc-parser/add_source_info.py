@@ -87,6 +87,34 @@ public interface {interface_name} {{
                             f.write(new_content)
                         src_files_modified += 1
 
+                elif filename == "FoldVisitor.java":
+                    # Give FoldVisitor a per-node hook: atNode(p, arg) runs for
+                    # every node and its result is combined with the results from
+                    # the node's children. Overriding it once lets a subclass
+                    # handle all node types instead of overriding visit for each;
+                    # the default returns leaf(arg), so existing subclasses are
+                    # unchanged.
+                    package_match = re.search(r'package\s+([\w\.]+);', content)
+                    current_package = package_match.group(1) if package_match else ""
+
+                    if "atNode" not in content:
+                        new_content = content
+
+                        if provider_package != current_package:
+                            import_stm = f"\nimport {provider_package}.{interface_name};\n"
+                            new_content = re.sub(r'(package\s+[\w\.]+;)', r'\g<1>' + import_stm, new_content, count=1)
+
+                        hook = "\n  public R atNode(SourceInfoProvider p, A arg) { return leaf(arg); }\n"
+                        last_brace_index = new_content.rfind('}')
+                        if last_brace_index != -1:
+                            new_content = new_content[:last_brace_index] + hook + new_content[last_brace_index:]
+
+                        new_content = new_content.replace("R r = leaf(arg);", "R r = atNode(p, arg);")
+
+                        with open(filepath, 'w') as f:
+                            f.write(new_content)
+                        src_files_modified += 1
+
                 elif "public abstract class" in content and "Visitor" in content:
                     # Abstract AST node (category)
                     # Find package declaration to know where we are

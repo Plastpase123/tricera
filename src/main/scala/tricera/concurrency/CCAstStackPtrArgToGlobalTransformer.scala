@@ -1,5 +1,6 @@
 /**
- * Copyright (c) 2025 Scania CV AB. All rights reserved.
+ * Copyright (c) 2025 Scania CV AB
+ *               2026 Zafer Esen. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -555,7 +556,11 @@ class CCAstStackPtrArgToGlobalTransformer(val entryFunctionId: String)
     if (callSiteTransforms.nonEmpty) {
       val additions = callSiteTransforms.map(t => t.getAstAdditions()).reduce((a,b) => {a += b})
       
-      val getMaxLineNumber = new CCAstMaxLineNumber
+      val getMaxLineNumber = new FoldVisitor[Int, Unit] {
+        override def leaf(x: Unit): Int = 0
+        override def combine(x: Int, r: Int, a: Unit): Int = x.max(r)
+        override def atNode(p: SourceInfoProvider, a: Unit): Int = p.getLineNum.max(0)
+      }
       val updateLineNumbers = new CCAstUpdtLineNum[Unit](
         declarations.asScala
           .map(d => d.accept(getMaxLineNumber, ()))
