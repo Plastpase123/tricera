@@ -95,7 +95,7 @@ Final:
  foo1_1(emptyHeap, nullAddr, nullAddr, emptyHeap, nullAddr, nullAddr) 
 ----------------------------------------------------------------------
 Failed assertion:
-false :- foo1_1(@h, @v_cleanup, p, @h_old, @v_cleanup_old, p_old), !is_O_Int(read(@h, p)). (line:4 col:9) (property: valid-deref)
+false :- foo1_1(@h, @v_cleanup, p, @h_old, @v_cleanup_old, p_old), !is_O_Int(read(@h, p)). (line:5 col:10) (property: valid-deref)
 
 UNSAFE
 

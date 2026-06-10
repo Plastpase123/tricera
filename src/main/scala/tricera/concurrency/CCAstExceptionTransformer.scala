@@ -323,7 +323,7 @@ object CCAstExceptionTransformer {
   private class ExceptionTransformer(
     val exceptionTypeData: ExceptionTypesCollectionResult,
     val funcReturnTypesMap: MHashMap[String, ListDeclaration_specifier],
-  ) extends CCAstCopyWithLocation[(String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])] {
+  ) extends ComposVisitor[(String, Stack[ListBuffer[(Parameter_declaration, Int)]], Option[Parameter_declaration])] with CopyAstLocation {
     private val getName = new CCAstGetNameVistor
     private val funcExceptionTypeData = exceptionTypeData.funcExceptionTypes
     private val exceptionTypes = exceptionTypeData.exceptionTypes
