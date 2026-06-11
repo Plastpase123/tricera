@@ -1,10 +1,10 @@
 name: Release
 
 # Pushing a tag v* builds TriCera (native image) on every supported platform,
-# runs the regression tests, packages per-platform zips and creates a DRAFT
-# release with all artifacts attached. The draft is published manually after
-# review. A workflow_dispatch run builds and uploads the zips as workflow
-# artifacts only (a dry run, no release is created).
+# runs the regression tests, packages per-platform zips and attaches them to a
+# DRAFT release. 
+# A workflow_dispatch run is a dry run: it builds, tests and packages, but
+# creates no release.
 
 on:
   push:
@@ -16,7 +16,28 @@ permissions:
   contents: write
 
 jobs:
+  # One job creates the single draft release; the build jobs then upload into
+  # it. If each build job created the draft itself, several drafts for the
+  # same tag would appear.
+  create-draft:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Create draft release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          echo "release $GITHUB_REF_NAME already exists; reusing it"
+        else
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --draft --generate-notes --title "TriCera $GITHUB_REF_NAME"
+        fi
+
   build:
+    needs: create-draft
+    # run even when create-draft is skipped (workflow_dispatch dry runs)
+    if: always() && (needs.create-draft.result == 'success' || github.event_name == 'workflow_dispatch')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -50,6 +71,30 @@ jobs:
       run: sbt nativeImage
     - name: Test
       run: cd regression-tests; export TERM=xterm; ./runalldirs
+    # Same debug collection as in scala.yml: keep the preprocessed .tri files
+    # of failed directories so platform-specific failures can be inspected.
+    - name: Collect debug files for failed tests
+      if: failure()
+      run: |
+        cd regression-tests
+        for d in */; do
+          d=${d%/}
+          [ -f "$d/Answers" ] && [ -f "$d/Output" ] || continue
+          cmp -s "$d/Answers" "$d/Output" && continue
+          for f in "$d"/*.c "$d"/*.hcc; do
+            [ -f "$f" ] || continue
+            timeout 20 ../tri -dumpPP -t:1 "$f" >/dev/null 2>&1 || true
+          done
+        done
+    - name: Dump debug files to log
+      if: failure()
+      run: |
+        for f in regression-tests/*/Output regression-tests/*/*.tri; do
+          [ -f "$f" ] || continue
+          echo "===== BEGIN $f (gzip | base64) ====="
+          gzip -c "$f" | base64
+          echo "===== END $f ====="
+        done
     - name: Package
       run: |
         VERSION="${GITHUB_REF_NAME#v}"
@@ -64,28 +109,10 @@ jobs:
         mv "$RUNNER_TEMP/$PKG/$PKG.zip" .
         shasum -a 256 "$PKG.zip" > "$PKG.zip.sha256"
         ls -la "$PKG.zip"
-    - uses: actions/upload-artifact@v4
-      with:
-        name: tricera-${{ matrix.platform }}
-        path: |
-          tricera-*.zip
-          tricera-*.zip.sha256
-
-  # A single job creates one draft release with all platform artifacts; the
-  # matrix jobs must not each call the release action, or several drafts for
-  # the same tag appear.
-  draft-release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-22.04
-    steps:
-    - uses: actions/download-artifact@v4
-      with:
-        path: artifacts
-        merge-multiple: true
-    - name: Create draft release
-      uses: softprops/action-gh-release@v2
-      with:
-        draft: true
-        generate_release_notes: true
-        files: artifacts/*
+    - name: Upload to draft release
+      if: startsWith(github.ref, 'refs/tags/')
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+          --clobber tricera-*.zip tricera-*.zip.sha256
