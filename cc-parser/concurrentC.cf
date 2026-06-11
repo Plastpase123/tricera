@@ -124,6 +124,10 @@ NoRetFunSpec.   Function_specifier ::= "_Noreturn" ;
 
 Const.      Type_qualifier ::= "const" ;
 NoOptim.    Type_qualifier ::= "volatile";
+Const1.     Type_qualifier ::= "__const__";
+Const2.     Type_qualifier ::= "__const";
+NoOptim1.   Type_qualifier ::= "__volatile__";
+NoOptim2.   Type_qualifier ::= "__volatile";
 Restrict1.  Type_qualifier ::= "__restrict__";
 Restrict2.  Type_qualifier ::= "__restrict";
 
