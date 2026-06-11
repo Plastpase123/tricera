@@ -22,5 +22,5 @@ TESTS="basic-no-exception.cpp \
 for name in $TESTS; do
   echo
   echo $name
-  $TRI_CMD -abstract:off -cppExc "$@" $name 2>&1 | grep -v 'at '
+  $TRI_CMD -abstract:off "$@" $name 2>&1 | grep -v 'at '
 done
