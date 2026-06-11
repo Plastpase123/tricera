@@ -1,0 +1,91 @@
+name: Release
+
+# Pushing a tag v* builds TriCera (native image) on every supported platform,
+# runs the regression tests, packages per-platform zips and creates a DRAFT
+# release with all artifacts attached. The draft is published manually after
+# review. A workflow_dispatch run builds and uploads the zips as workflow
+# artifacts only (a dry run, no release is created).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+          - os: macos-15
+            platform: macos-arm64
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up GraalVM 25 (for native image)
+      uses: graalvm/setup-graalvm@v1
+      with:
+        java-version: '25'
+        distribution: 'graalvm'
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        set-java-home: 'false'
+    - name: Set up JDK 17 (for compilation)
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: 'sbt'
+    - name: Set up sbt
+      uses: sbt/setup-sbt@v1.1.22
+    - name: Build
+      run: sbt nativeImage
+    - name: Test
+      run: cd regression-tests; export TERM=xterm; ./runalldirs
+    - name: Package
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+        PKG="tricera-${VERSION}-${{ matrix.platform }}"
+        STAGE="$RUNNER_TEMP/$PKG/tricera"
+        mkdir -p "$STAGE/target/native-image"
+        cp target/native-image/TriCera "$STAGE/target/native-image/"
+        cp tri triEnv tri-client tri-pp README.md LICENSE "$STAGE/"
+        cp -R regression-tests "$STAGE/"
+        find "$STAGE/regression-tests" -name 'Output*' -delete
+        (cd "$RUNNER_TEMP/$PKG" && zip -qry "$PKG.zip" tricera)
+        mv "$RUNNER_TEMP/$PKG/$PKG.zip" .
+        shasum -a 256 "$PKG.zip" > "$PKG.zip.sha256"
+        ls -la "$PKG.zip"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: tricera-${{ matrix.platform }}
+        path: |
+          tricera-*.zip
+          tricera-*.zip.sha256
+
+  # A single job creates one draft release with all platform artifacts; the
+  # matrix jobs must not each call the release action, or several drafts for
+  # the same tag appear.
+  draft-release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+        merge-multiple: true
+    - name: Create draft release
+      uses: softprops/action-gh-release@v2
+      with:
+        draft: true
+        generate_release_notes: true
+        files: artifacts/*
