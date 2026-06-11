@@ -83,7 +83,11 @@ object CCReader {
 
     def entry(parser : concurrent_c.parser) = parser.pProgram
     val prog = parseWithEntry(programReader, entry _)
-    val exceptionTransformedProg = CCAstExceptionTransformer.transform(prog)
+    val exceptionTransformedProg = if (TriCeraParameters.get.cppExceptions) {
+      CCAstExceptionTransformer.transform(prog)
+    } else {
+      prog
+    }
     val atCallTransformedProg = CCAstAtExpressionTransformer.transform(exceptionTransformedProg)
     val typeAnnotProg = CCAstTypeAnnotator(atCallTransformedProg)
     val (transformedCallsProg, callSiteTransforms) =

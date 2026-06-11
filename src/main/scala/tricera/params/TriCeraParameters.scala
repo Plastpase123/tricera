@@ -120,6 +120,8 @@ class TriCeraParameters extends GlobalParameters {
   var inferLoopInvariants = false
   var fullSolutionOnAssert = true
 
+  var cppExceptions = false
+
   override def needFullSolution: Boolean =
     (assertions && fullSolutionOnAssert) ||
       displaySolutionProlog || displaySolutionSMT || displayACSL || log ||
@@ -316,6 +318,7 @@ class TriCeraParameters extends GlobalParameters {
     case "-dotCEX" :: rest => pngNo = false; parseArgs(rest)
     case "-eogCEX" :: rest => pngNo = false; eogCEX = true; parseArgs(rest)
     case "-cex" :: rest => plainCEX = true; parseArgs(rest)
+    case "-cppExc" :: rest => cppExceptions = true; parseArgs(rest)
     case "-assert" :: rest => TriCeraParameters.get.assertions = true; parseArgs(rest)
     case "-assertNoVerify" :: rest => TriCeraParameters.get.assertions = true;  TriCeraParameters.get.fullSolutionOnAssert = false; parseArgs(rest)
     case "-dev" :: rest => devMode = true; showVarLineNumbersInTerms = true; parseArgs(rest)
