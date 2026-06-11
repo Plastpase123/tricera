@@ -55,9 +55,10 @@ class TriCeraPreprocessor(val inputFilePath   : String,
                               errorMsg  : String,
                               input     : String,
                               output    : String) : Int = {
+    val langFlag = if (inputFilePath.endsWith(".cpp")) "-xc++" else "-xc"
     val cmdLine : scala.Seq[String] = scala.Seq(ppPath, input, "-o", output) ++
                      (if (quiet) scala.Seq("-q") else Nil) ++ extraArgs ++
-                     scala.Seq("-m", entryFunction, "--", "-xc") ++
+                     scala.Seq("-m", entryFunction, "--", langFlag) ++
                      (if (displayWarnings) Nil else scala.Seq("-Wno-everything"))
 
     try { Process(cmdLine) ! } catch {
